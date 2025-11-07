@@ -68,6 +68,19 @@ function removeMinHXL() {
   document.querySelectorAll('.min-h-xl').forEach(el => el.remove());
 }
 
+function styleThreadline() {
+  document.querySelectorAll('shreddit-comment').forEach(comment => {
+    if (comment.shadowRoot) {
+      const threadlines = comment.shadowRoot.querySelectorAll('.threadline');
+      threadlines.forEach(el => {
+        if (el instanceof HTMLElement) {
+          el.style.marginLeft = '10px';
+        }
+      });
+    }
+  });
+}
+
 function removeExpandedComments() {
   // Handle regular DOM buttons
   const expandedButtons = document.querySelectorAll('button[aria-expanded="true"][aria-controls="comment-children"], button[aria-expanded="true"].button-small.button-plain.icon');
@@ -108,6 +121,7 @@ function runAll() {
   expandComments();
   expandCollapsedComments();
   removeExpandedComments();
+  styleThreadline();
   blockAds();
   removeMinHXL();
 }
