@@ -19,6 +19,9 @@ const DEFAULT_SETTINGS: FontSettings = {
 let typographyStyleElement: HTMLStyleElement | null = null;
 let fontsPreloaded = false;
 
+const FONT_FALLBACK = 'Lexend Deca';
+const REQUEST_TIMEOUT_MS = 10_000;
+
 // Map font names to Google Fonts API names
 const FONT_MAP: Record<string, string> = {
   'Lexend Deca': 'Lexend+Deca:wght@100..900',
@@ -32,6 +35,62 @@ const FONT_MAP: Record<string, string> = {
   'Rubik': 'Rubik:wght@300..900',
 };
 
+const COMMENT_EXPANSION_TEXTS = ['more replies', 'view more comments', 'continue this thread'];
+const COMMENT_BUTTON_SELECTOR = 'shreddit-comment, [data-testid*="comment"], .Comment, [class*="comment"]';
+const DROPDOWN_SELECTOR = '[role="menu"], [role="listbox"], [data-testid*="menu"], [data-testid*="dropdown"]';
+const NAVIGATION_SELECTOR = 'header, nav, [role="navigation"], [data-testid*="search"], [data-testid*="header"], form[action*="search"]';
+const AD_SELECTORS = ['[data-testid="ad-slot"]', '[data-testid="promoted"]', '[id*="ad"]', '[id*="promo"]', '[class*="Promoted"]', 'a[href*="/promoted/"]', 'iframe[src*="ads"]'];
+const STATIC_REMOVAL_SELECTORS = ['[data-testid="seeker-action-row"]', '[data-testid="action-row"]', 'shreddit-async-loader'];
+
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+function getFontQuery(fontFamily: string): string {
+  return FONT_MAP[fontFamily] || FONT_MAP[FONT_FALLBACK];
+}
+
+function getFontStyleId(fontFamily: string): string {
+  return `fontchanger-font-style-${fontFamily.replace(/\s+/g, '-').toLowerCase()}`;
+}
+
+async function waitForFontsReady(): Promise<void> {
+  if (document.fonts?.ready) {
+    await document.fonts.ready;
+  } else {
+    await delay(100);
+  }
+}
+
+async function fetchFontCss(fontUrl: string, timeoutMs = REQUEST_TIMEOUT_MS): Promise<string> {
+  if (!chrome.runtime?.sendMessage) {
+    throw new Error('Chrome runtime not available');
+  }
+
+  return new Promise<string>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`Timeout waiting for background script response (${timeoutMs}ms)`));
+    }, timeoutMs);
+
+    chrome.runtime.sendMessage(
+      { type: 'FETCH_FONT_CSS', fontUrl },
+      (response) => {
+        clearTimeout(timeout);
+
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+
+        if (!response?.success || !response.css) {
+          reject(new Error(response?.error || 'No CSS received from background script'));
+          return;
+        }
+
+        resolve(response.css);
+      }
+    );
+  });
+}
+
 async function getSettings(): Promise<FontSettings> {
   return new Promise((resolve) => {
     chrome.storage.local.get(DEFAULT_SETTINGS, (result) => {
@@ -42,129 +101,57 @@ async function getSettings(): Promise<FontSettings> {
 
 async function loadFont(fontFamily: string): Promise<void> {
   if (!document.head) return;
-  
-  const fontApiName = FONT_MAP[fontFamily] || FONT_MAP['Lexend Deca'];
-  const fontStyleId = `fontchanger-font-style-${fontFamily.replace(/\s+/g, '-').toLowerCase()}`;
-  
-  // Check if font is already loaded (from preload)
+
+  const fontStyleId = getFontStyleId(fontFamily);
   const existingStyle = document.getElementById(fontStyleId);
   if (existingStyle) {
-    // Font already loaded, just wait a bit for it to be ready
-    if (document.fonts && document.fonts.ready) {
-      await document.fonts.ready;
-    } else {
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
+    await waitForFontsReady();
     return;
   }
-  
-  // Fetch CSS via background script (bypasses CSP)
-  const fontUrl = `https://fonts.googleapis.com/css2?family=${fontApiName}&display=swap`;
+
+  const fontUrl = `https://fonts.googleapis.com/css2?family=${getFontQuery(fontFamily)}&display=swap`;
   console.log(`[FontChanger] Loading font "${fontFamily}" from Google Fonts via background script: ${fontUrl}`);
-  
+
   try {
-    // Check if background script is available
-    if (!chrome.runtime || !chrome.runtime.sendMessage) {
-      throw new Error('Chrome runtime not available');
-    }
-    
-    const response = await new Promise<{ success: boolean; css?: string; error?: string }>((resolve) => {
-      const timeout = setTimeout(() => {
-        resolve({ success: false, error: 'Timeout waiting for background script response (10s)' });
-      }, 10000);
-      
-      try {
-        chrome.runtime.sendMessage(
-          { type: 'FETCH_FONT_CSS', fontUrl },
-          (response) => {
-            clearTimeout(timeout);
-            if (chrome.runtime.lastError) {
-              console.error('[FontChanger] Background script error:', chrome.runtime.lastError);
-              resolve({ success: false, error: chrome.runtime.lastError.message });
-            } else if (response && response.success) {
-              resolve(response);
-            } else {
-              resolve({ success: false, error: response?.error || 'No response from background script' });
-            }
-          }
-        );
-      } catch (error) {
-        clearTimeout(timeout);
-        resolve({ success: false, error: error instanceof Error ? error.message : 'Unknown error sending message' });
-      }
-    });
-    
-    if (!response.success) {
-      throw new Error(response.error || 'Failed to fetch font CSS');
-    }
-    
-    if (!response.css) {
-      throw new Error('Background script returned empty CSS');
-    }
-    
-    // Inject CSS as style tag (bypasses CSP font-src restriction)
+    const css = await fetchFontCss(fontUrl);
     const style = document.createElement('style');
     style.id = fontStyleId;
-    style.textContent = response.css;
+    style.textContent = css;
     document.head.appendChild(style);
-    
-    console.log(`[FontChanger] Font "${fontFamily}" loaded successfully, CSS length: ${response.css.length}`);
-    
-    // Wait for fonts to load
-    if (document.fonts && document.fonts.ready) {
-      await document.fonts.ready;
-    } else {
-      await new Promise(resolve => setTimeout(resolve, 300));
-    }
+
+    console.log(`[FontChanger] Font "${fontFamily}" loaded successfully, CSS length: ${css.length}`);
+    await waitForFontsReady();
   } catch (error) {
     console.error(`[FontChanger] Failed to load font "${fontFamily}":`, error);
-    // Don't throw - allow page to continue with fallback font
+    throw error instanceof Error ? error : new Error(String(error));
   }
 }
 
 async function loadAllFonts(): Promise<void> {
   if (!document.head || fontsPreloaded) return;
-  
+
   fontsPreloaded = true;
   console.log('[FontChanger] Preloading all fonts...');
-  
-  // Load all fonts upfront so switching is instant (via background script to bypass CSP)
-  const loadPromises = Object.keys(FONT_MAP).map(async (fontFamily) => {
-    const fontApiName = FONT_MAP[fontFamily];
-    const fontStyleId = `fontchanger-font-style-${fontFamily.replace(/\s+/g, '-').toLowerCase()}`;
-    
-    // Check if already loaded
-    const existingStyle = document.getElementById(fontStyleId);
-    if (existingStyle) return;
-    
-    const fontUrl = `https://fonts.googleapis.com/css2?family=${fontApiName}&display=swap`;
-    
-    try {
-      const response = await new Promise<{ success: boolean; css?: string; error?: string }>((resolve) => {
-        chrome.runtime.sendMessage(
-          { type: 'FETCH_FONT_CSS', fontUrl },
-          (response) => {
-            if (chrome.runtime.lastError) {
-              resolve({ success: false, error: chrome.runtime.lastError.message });
-            } else {
-              resolve(response || { success: false, error: 'No response' });
-            }
-          }
-        );
-      });
-      
-      if (response.success && response.css) {
+
+  await Promise.all(
+    Object.keys(FONT_MAP).map(async (fontFamily) => {
+      const fontStyleId = getFontStyleId(fontFamily);
+      if (document.getElementById(fontStyleId)) return;
+
+      const fontUrl = `https://fonts.googleapis.com/css2?family=${getFontQuery(fontFamily)}&display=swap`;
+
+      try {
+        const css = await fetchFontCss(fontUrl);
         const style = document.createElement('style');
         style.id = fontStyleId;
-        style.textContent = response.css;
-        document.head.appendChild(style);
+        style.textContent = css;
+        document.head?.appendChild(style);
+      } catch (error) {
+        console.error(`[FontChanger] Failed to preload font "${fontFamily}":`, error);
       }
-    } catch (error) {
-      console.error(`[FontChanger] Failed to preload font "${fontFamily}":`, error);
-    }
-  });
-  
-  await Promise.all(loadPromises);
+    })
+  );
+
   console.log('[FontChanger] All fonts preloaded');
 }
 
@@ -178,25 +165,36 @@ function applyTypography(settings: FontSettings): void {
   
   // Create CSS to apply typography settings
   const css = `
-    *,
-    *::before,
-    *::after {
-      font-family: '${settings.fontFamily}', sans-serif !important;
-      font-size: ${settings.fontSize}px !important;
-      font-weight: ${settings.fontWeight} !important;
-      line-height: ${settings.lineHeight} !important;
-      letter-spacing: ${settings.letterSpacing}px !important;
+    :root {
+      --fontchanger-font-family: '${settings.fontFamily}', sans-serif;
+      --fontchanger-font-size: ${settings.fontSize}px;
+      --fontchanger-font-weight: ${settings.fontWeight};
+      --fontchanger-line-height: ${settings.lineHeight};
+      --fontchanger-letter-spacing: ${settings.letterSpacing}px;
     }
-    
-    input,
-    textarea,
-    select,
-    button {
-      font-family: '${settings.fontFamily}', sans-serif !important;
-      font-size: ${settings.fontSize}px !important;
-      font-weight: ${settings.fontWeight} !important;
-      line-height: ${settings.lineHeight} !important;
-      letter-spacing: ${settings.letterSpacing}px !important;
+
+    body {
+      font-family: var(--fontchanger-font-family) !important;
+      font-size: var(--fontchanger-font-size) !important;
+      font-weight: var(--fontchanger-font-weight) !important;
+      line-height: var(--fontchanger-line-height) !important;
+      letter-spacing: var(--fontchanger-letter-spacing) !important;
+    }
+
+    body *,
+    body *::before,
+    body *::after {
+      font-family: var(--fontchanger-font-family) !important;
+      line-height: var(--fontchanger-line-height) !important;
+      letter-spacing: var(--fontchanger-letter-spacing) !important;
+    }
+
+    body input,
+    body textarea,
+    body select,
+    body button {
+      font-size: var(--fontchanger-font-size) !important;
+      font-weight: var(--fontchanger-font-weight) !important;
     }
   `;
   
@@ -211,78 +209,74 @@ function applyTypography(settings: FontSettings): void {
 }
 
 async function injectFontAndTypography(): Promise<void> {
-  // Preload all fonts first (like original Lexend Deca)
   await loadAllFonts();
-  
+
   const settings = await getSettings();
-  await loadFont(settings.fontFamily);
+  try {
+    await loadFont(settings.fontFamily);
+  } catch (error) {
+    console.warn(`[FontChanger] Continuing with fallback fonts after failing to load "${settings.fontFamily}":`, error);
+  }
   applyTypography(settings);
 }
 
 function expandComments() {
-  const buttons = document.querySelectorAll('button');
-  buttons.forEach(btn => {
-    const text = (btn.textContent || '').toLowerCase();
-    // Only click buttons that are clearly comment expansion buttons, not navigation
-    if ((text.includes('more replies') || text.includes('view more comments') || text.includes('continue this thread')) 
-        && btn instanceof HTMLElement 
-        && btn.offsetParent !== null
-        && btn.type !== 'submit'
-        && !btn.closest('form')
-        && !btn.getAttribute('href')) {
-      btn.click();
-    }
+  document.querySelectorAll('button').forEach((btn) => {
+    if (!(btn instanceof HTMLElement)) return;
+    if (btn.offsetParent === null) return;
+    if (btn.type === 'submit' || btn.closest('form') || btn.getAttribute('href')) return;
+
+    const text = (btn.textContent || '').toLowerCase().trim();
+    if (!COMMENT_EXPANSION_TEXTS.some((needle) => text.includes(needle))) return;
+
+    btn.click();
   });
 }
 
 function expandCollapsedComments() {
-  // Find all expand buttons with button-small.button-plain.icon classes
-  // Only target buttons that are clearly comment-related
-  const allExpandButtons = document.querySelectorAll('button.button-small.button-plain.icon, button.button-small.button-plain[class*="icon"]');
-  allExpandButtons.forEach(btn => {
-    if (btn instanceof HTMLElement && btn.offsetParent !== null) {
-      const isDropdown = btn.closest('[role="menu"], [role="listbox"], [data-testid*="menu"], [data-testid*="dropdown"]');
-      const hasHref = btn.getAttribute('href');
-      
-      // Check if button is inside a comment context
-      const isInComment = btn.closest('shreddit-comment, [data-testid*="comment"], .Comment, [class*="comment"]');
-      
-      // Check if button is in navigation/search areas (header, nav, search)
-      const isInNav = btn.closest('header, nav, [role="navigation"], [data-testid*="search"], [data-testid*="header"], form[action*="search"]');
-      
-      // Check aria-label or text for navigation/search keywords
-      const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
-      const buttonText = (btn.textContent || '').toLowerCase();
-      const isSearchOrNav = ariaLabel.includes('search') || ariaLabel.includes('navigate') || 
-                           buttonText.includes('search') || buttonText.includes('go to') ||
-                           btn.closest('a[href*="search"]');
-      
-      // Only click if it's in a comment context, not in nav/search, and not a dropdown
-      if (!isDropdown && !hasHref && isInComment && !isInNav && !isSearchOrNav) {
-        btn.click();
+  const shouldClickButton = (btn: HTMLElement): boolean => {
+    if (btn.offsetParent === null) return false;
+    if (btn.getAttribute('href')) return false;
+    if (!btn.closest(COMMENT_BUTTON_SELECTOR)) return false;
+    if (btn.closest(DROPDOWN_SELECTOR)) return false;
+
+    const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
+    const buttonText = (btn.textContent || '').toLowerCase();
+    const isSearchOrNav =
+      ariaLabel.includes('search') ||
+      ariaLabel.includes('navigate') ||
+      buttonText.includes('search') ||
+      buttonText.includes('go to') ||
+      Boolean(btn.closest('a[href*="search"]')) ||
+      Boolean(btn.closest(NAVIGATION_SELECTOR));
+
+    return !isSearchOrNav;
+  };
+
+  document
+    .querySelectorAll('button.button-small.button-plain.icon, button.button-small.button-plain[class*="icon"]')
+    .forEach((button) => {
+      if (button instanceof HTMLElement && shouldClickButton(button)) {
+        button.click();
       }
-    }
-  });
-  
-  // Also handle collapsed shreddit-comment elements - this is safer as it's scoped to comments
-  document.querySelectorAll('shreddit-comment[collapsed], shreddit-comment[collapsed="true"]').forEach(node => {
-    const btn = node.querySelector('button.button-small.button-plain') as HTMLElement;
-    if (btn && btn.offsetParent !== null) {
-      const isDropdown = btn.closest('[role="menu"], [role="listbox"]');
-      const hasHref = btn.getAttribute('href');
-      // Additional check: ensure it's not a navigation button
-      const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
-      const isSearchOrNav = ariaLabel.includes('search') || ariaLabel.includes('navigate');
-      
-      if (!isDropdown && !hasHref && !isSearchOrNav) {
-        btn.click();
+    });
+
+  document
+    .querySelectorAll('shreddit-comment[collapsed], shreddit-comment[collapsed="true"]')
+    .forEach((node) => {
+      const button = node.querySelector('button.button-small.button-plain');
+      if (button instanceof HTMLElement && shouldClickButton(button)) {
+        button.click();
       }
-    }
-  });
+    });
 }
 
 function removeMinHXL() {
-  document.querySelectorAll('.min-h-xl').forEach(el => el.remove());
+  document.querySelectorAll('.min-h-xl').forEach((el) => {
+    if (el instanceof HTMLElement) {
+      el.remove();
+    }
+  });
 }
 
 function styleThreadline() {
@@ -299,102 +293,154 @@ function styleThreadline() {
 }
 
 function removeExpandedComments() {
-  // Handle regular DOM buttons
-  const expandedButtons = document.querySelectorAll('button[aria-expanded="true"][aria-controls="comment-children"], button[aria-expanded="true"].button-small.button-plain.icon');
-  expandedButtons.forEach(btn => {
-    const parent = btn.parentElement;
-    const grandparent = parent?.parentElement;
-    if (grandparent && grandparent.classList.contains('contents')) {
-      grandparent.remove();
-    }
-  });
-  
-  // Handle shadow DOM buttons inside shreddit-comment
-  document.querySelectorAll('shreddit-comment').forEach(comment => {
-    if (comment.shadowRoot) {
-      const shadowButtons = comment.shadowRoot.querySelectorAll('button[aria-expanded="true"], button.button-small.button-plain.icon');
-      shadowButtons.forEach(btn => {
+  const removeContents = (root: ParentNode) => {
+    root
+      .querySelectorAll('button[aria-expanded="true"][aria-controls="comment-children"], button[aria-expanded="true"].button-small.button-plain.icon')
+      .forEach((btn) => {
         const parent = btn.parentElement;
         const grandparent = parent?.parentElement;
-        if (grandparent && grandparent.classList.contains('contents')) {
+        if (grandparent?.classList.contains('contents')) {
           grandparent.remove();
         }
       });
+  };
+
+  removeContents(document);
+
+  document.querySelectorAll('shreddit-comment').forEach((comment) => {
+    if (comment.shadowRoot) {
+      removeContents(comment.shadowRoot);
     }
   });
 }
 
 function blockAds() {
-  const selectors = ['[data-testid="ad-slot"]', '[data-testid="promoted"]', '[id*="ad"]', '[id*="promo"]', '[class*="Promoted"]', 'a[href*="/promoted/"]', 'iframe[src*="ads"]'];
-  selectors.forEach(sel => {
-    document.querySelectorAll(sel).forEach(el => {
-      if (el instanceof HTMLElement) el.style.display = 'none';
+  AD_SELECTORS.forEach((selector) => {
+    document.querySelectorAll(selector).forEach((el) => {
+      if (el instanceof HTMLElement) {
+        el.style.display = 'none';
+      }
     });
   });
 }
 
-function removeSeekerActionRow() {
-  // Remove seeker action row elements
-  document.querySelectorAll('[data-testid="seeker-action-row"]').forEach(el => {
-    if (el instanceof HTMLElement) el.remove();
+function removeStaticRows() {
+  STATIC_REMOVAL_SELECTORS.forEach((selector) => {
+    document.querySelectorAll(selector).forEach((el) => {
+      if (el instanceof HTMLElement) {
+        el.remove();
+      }
+    });
   });
 }
 
-function removeActionRow() {
-  // Remove action row elements
-  document.querySelectorAll('[data-testid="action-row"]').forEach(el => {
-    if (el instanceof HTMLElement) el.remove();
+const DOM_TASKS: Array<() => void> = [
+  expandComments,
+  expandCollapsedComments,
+  removeExpandedComments,
+  styleThreadline,
+  blockAds,
+  removeMinHXL,
+  removeStaticRows,
+];
+
+function runDomTasks(): void {
+  DOM_TASKS.forEach((task) => {
+    try {
+      task();
+    } catch (error) {
+      console.error(`[FontChanger] Task ${task.name || 'anonymous'} failed:`, error);
+    }
   });
 }
 
-function removeAsyncLoaders() {
-  // Remove shreddit-async-loader elements
-  document.querySelectorAll('shreddit-async-loader').forEach(el => {
-    if (el instanceof HTMLElement) el.remove();
-  });
+async function applyEnhancements(): Promise<void> {
+  try {
+    await injectFontAndTypography();
+  } catch (error) {
+    console.error('[FontChanger] Failed to inject font and typography settings:', error);
+  }
+
+  runDomTasks();
 }
 
-function runAll() {
-  injectFontAndTypography();
-  expandComments();
-  expandCollapsedComments();
-  removeExpandedComments();
-  styleThreadline();
-  blockAds();
-  removeMinHXL();
-  removeSeekerActionRow();
-  removeActionRow();
-  removeAsyncLoaders();
+let activeRun: Promise<void> | null = null;
+let rerunRequested = false;
+
+function queueEnhancements(): void {
+  if (activeRun) {
+    rerunRequested = true;
+    return;
+  }
+
+  rerunRequested = false;
+  activeRun = applyEnhancements()
+    .catch((error) => {
+      console.error('[FontChanger] Enhancement pipeline failed:', error);
+    })
+    .finally(() => {
+      activeRun = null;
+      if (rerunRequested) {
+        queueEnhancements();
+      }
+    });
 }
+
+function onReady(callback: () => void): void {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', callback, { once: true });
+  } else {
+    callback();
+  }
+}
+
+function startObservers(): void {
+  const schedule = () => queueEnhancements();
+
+  setInterval(schedule, 2000);
+
+  if (document.body) {
+    new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
+  }
+}
+
+// Initial kick-off
+queueEnhancements();
+
+onReady(() => {
+  queueEnhancements();
+  startObservers();
+});
 
 // Listen for messages from popup
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'FONT_SETTINGS_CHANGED') {
     const settings = message.settings as FontSettings;
-    loadFont(settings.fontFamily).then(() => {
-      applyTypography(settings);
-    });
-    sendResponse({ success: true });
+
+    (async () => {
+      try {
+        await loadFont(settings.fontFamily).catch((error) => {
+          console.warn(`[FontChanger] Unable to load font "${settings.fontFamily}" from popup:`, error);
+        });
+
+        applyTypography(settings);
+        sendResponse({ success: true });
+      } catch (error) {
+        console.error('[FontChanger] Failed to apply font settings from popup:', error);
+        sendResponse({
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
+
+    queueEnhancements();
+    return true;
   }
-  return true;
+
+  return false;
 });
 
 window.addEventListener('unhandledrejection', (e) => {
   if (e.reason?.name === 'AbortError') e.preventDefault();
 });
-
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
-    runAll();
-    setInterval(runAll, 2000);
-    if (document.body) {
-      new MutationObserver(runAll).observe(document.body, { childList: true, subtree: true });
-    }
-  });
-} else {
-  runAll();
-  setInterval(runAll, 2000);
-  if (document.body) {
-    new MutationObserver(runAll).observe(document.body, { childList: true, subtree: true });
-  }
-}
