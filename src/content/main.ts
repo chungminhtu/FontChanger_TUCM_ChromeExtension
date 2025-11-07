@@ -68,6 +68,15 @@ function removeMinHXL() {
   document.querySelectorAll('.min-h-xl').forEach(el => el.remove());
 }
 
+function removeExpandedComments() {
+  const expandedButtons = document.querySelectorAll('button[aria-expanded="true"][aria-label="Toggle Comment Thread"]');
+  expandedButtons.forEach(btn => {
+    const parent = btn.parentElement;
+    const grandparent = parent?.parentElement;
+    if (grandparent) grandparent.remove();
+  });
+}
+
 function blockAds() {
   const selectors = ['[data-testid="ad-slot"]', '[data-testid="promoted"]', '[id*="ad"]', '[id*="promo"]', '[class*="Promoted"]', 'a[href*="/promoted/"]', 'iframe[src*="ads"]'];
   selectors.forEach(sel => {
@@ -81,6 +90,7 @@ function runAll() {
   injectFont();
   expandComments();
   expandCollapsedComments();
+  removeExpandedComments();
   blockAds();
   removeMinHXL();
 }
