@@ -1,20 +1,5 @@
 
-html {
-  font-size: 120% !important;
-}
-
-*,
-*::before,
-*::after {
-  font-family: 'Lexend Deca', sans-serif !important;
-}
-
-input,
-textarea,
-select,
-button {
-  font-family: 'Lexend Deca', sans-serif !important;
-}
+/* Typography settings (font-family, font-size, font-weight, line-height, letter-spacing) are applied dynamically via content script */
 
 .main-container,
 .main-container.fixed-sidebar,

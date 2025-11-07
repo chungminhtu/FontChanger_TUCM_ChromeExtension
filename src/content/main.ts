@@ -1,41 +1,161 @@
-// FontChanger - Apply Lexend Deca font and auto-expand comments on Reddit
+// FontChanger - Apply custom fonts and typography settings on Reddit
 
-let fontInjected = false;
-const FONT_CSS_CACHE_KEY = 'fontchanger_lexend_deca_css';
+interface FontSettings {
+  fontFamily: string;
+  fontSize: number;
+  fontWeight: number;
+  lineHeight: number;
+  letterSpacing: number;
+}
 
-async function injectFont() {
-  if (fontInjected || document.getElementById('fontchanger-lexend-deca')) return;
+const DEFAULT_SETTINGS: FontSettings = {
+  fontFamily: 'Lexend Deca',
+  fontSize: 16,
+  fontWeight: 400,
+  lineHeight: 1.5,
+  letterSpacing: 0,
+};
+
+let typographyStyleElement: HTMLStyleElement | null = null;
+
+// Map font names to Google Fonts API names
+const FONT_MAP: Record<string, string> = {
+  'Lexend Deca': 'Lexend+Deca',
+  'Poppins': 'Poppins',
+  'Outfit': 'Outfit',
+  'Urbanist': 'Urbanist',
+  'Figtree': 'Figtree',
+  'Plus Jakarta Sans': 'Plus+Jakarta+Sans',
+  'DM Sans': 'DM+Sans',
+  'Manrope': 'Manrope',
+  'Rubik': 'Rubik',
+};
+
+async function getSettings(): Promise<FontSettings> {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(DEFAULT_SETTINGS, (result) => {
+      resolve(result as FontSettings);
+    });
+  });
+}
+
+async function loadFont(fontFamily: string): Promise<void> {
   if (!document.head) return;
   
+  const fontApiName = FONT_MAP[fontFamily] || FONT_MAP['Lexend Deca'];
+  const cacheKey = `fontchanger_${fontFamily.replace(/\s+/g, '_').toLowerCase()}_css`;
+  
+  // Check if font style already exists
+  const existingStyle = document.getElementById('fontchanger-font-style');
+  if (existingStyle) {
+    existingStyle.remove();
+  }
+  
   try {
-    // Check cache first
-    let fontCss = localStorage.getItem(FONT_CSS_CACHE_KEY);
+    // Check cache in chrome.storage
+    const cached = await new Promise<string | null>((resolve) => {
+      chrome.storage.local.get([cacheKey], (result) => {
+        resolve(result[cacheKey] || null);
+      });
+    });
+    
+    let fontCss = cached;
     
     if (!fontCss) {
-      // Fetch Google Fonts CSS and cache it
-      const fontResponse = await fetch('https://fonts.googleapis.com/css2?family=Lexend+Deca:wght@100..900&display=swap');
+      // Fetch Google Fonts CSS
+      const fontUrl = `https://fonts.googleapis.com/css2?family=${fontApiName}:wght@100..900&display=swap`;
+      const fontResponse = await fetch(fontUrl);
       if (!fontResponse.ok) throw new Error('Font fetch failed');
       fontCss = await fontResponse.text();
-      localStorage.setItem(FONT_CSS_CACHE_KEY, fontCss);
+      
+      // Cache it
+      chrome.storage.local.set({ [cacheKey]: fontCss });
     }
     
-    // Inject Google Fonts CSS (custom CSS is loaded via manifest)
+    // Inject Google Fonts CSS
     const style = document.createElement('style');
-    style.id = 'fontchanger-lexend-deca';
+    style.id = 'fontchanger-font-style';
     style.textContent = fontCss;
     document.head.appendChild(style);
-    fontInjected = true;
+    
+    // Wait for fonts to load
+    if (document.fonts && document.fonts.ready) {
+      await document.fonts.ready;
+    } else {
+      // Fallback: wait a bit for fonts to load
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
   } catch (error) {
+    console.error('Failed to load font:', error);
     // Try to use cached version if fetch fails
-    const cachedCss = localStorage.getItem(FONT_CSS_CACHE_KEY);
-    if (cachedCss) {
+    const cached = await new Promise<string | null>((resolve) => {
+      chrome.storage.local.get([cacheKey], (result) => {
+        resolve(result[cacheKey] || null);
+      });
+    });
+    
+    if (cached) {
       const style = document.createElement('style');
-      style.id = 'fontchanger-lexend-deca';
-      style.textContent = cachedCss;
+      style.id = 'fontchanger-font-style';
+      style.textContent = cached;
       document.head.appendChild(style);
-      fontInjected = true;
+      
+      // Wait for fonts to load
+      if (document.fonts && document.fonts.ready) {
+        await document.fonts.ready;
+      } else {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
     }
   }
+}
+
+function applyTypography(settings: FontSettings): void {
+  if (!document.head) return;
+  
+  // Remove existing typography style if it exists
+  if (typographyStyleElement) {
+    typographyStyleElement.remove();
+  }
+  
+  // Create CSS to apply typography settings
+  const css = `
+    *,
+    *::before,
+    *::after {
+      font-family: '${settings.fontFamily}', sans-serif !important;
+      font-size: ${settings.fontSize}px !important;
+      font-weight: ${settings.fontWeight} !important;
+      line-height: ${settings.lineHeight} !important;
+      letter-spacing: ${settings.letterSpacing}px !important;
+    }
+    
+    input,
+    textarea,
+    select,
+    button {
+      font-family: '${settings.fontFamily}', sans-serif !important;
+      font-size: ${settings.fontSize}px !important;
+      font-weight: ${settings.fontWeight} !important;
+      line-height: ${settings.lineHeight} !important;
+      letter-spacing: ${settings.letterSpacing}px !important;
+    }
+  `;
+  
+  const style = document.createElement('style');
+  style.id = 'fontchanger-typography-style';
+  style.textContent = css;
+  document.head.appendChild(style);
+  typographyStyleElement = style;
+  
+  // Force a reflow to ensure font is applied
+  void document.body.offsetHeight;
+}
+
+async function injectFontAndTypography(): Promise<void> {
+  const settings = await getSettings();
+  await loadFont(settings.fontFamily);
+  applyTypography(settings);
 }
 
 function expandComments() {
@@ -174,7 +294,7 @@ function removeAsyncLoaders() {
 }
 
 function runAll() {
-  injectFont();
+  injectFontAndTypography();
   expandComments();
   expandCollapsedComments();
   removeExpandedComments();
@@ -185,6 +305,18 @@ function runAll() {
   removeActionRow();
   removeAsyncLoaders();
 }
+
+// Listen for messages from popup
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type === 'FONT_SETTINGS_CHANGED') {
+    const settings = message.settings as FontSettings;
+    loadFont(settings.fontFamily).then(() => {
+      applyTypography(settings);
+    });
+    sendResponse({ success: true });
+  }
+  return true;
+});
 
 window.addEventListener('unhandledrejection', (e) => {
   if (e.reason?.name === 'AbortError') e.preventDefault();
