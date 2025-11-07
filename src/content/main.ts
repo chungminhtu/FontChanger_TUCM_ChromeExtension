@@ -1,36 +1,40 @@
 // FontChanger - Apply Lexend Deca font and auto-expand comments on Reddit
 
 let fontInjected = false;
+const FONT_CSS_CACHE_KEY = 'fontchanger_lexend_deca_css';
 
 async function injectFont() {
   if (fontInjected || document.getElementById('fontchanger-lexend-deca')) return;
   if (!document.head) return;
   
   try {
-    // Fetch Google Fonts CSS and inject as inline to bypass CSP
-    const fontResponse = await fetch('https://fonts.googleapis.com/css2?family=Lexend+Deca:wght@100..900&display=swap');
-    const fontCss = await fontResponse.text();
+    // Check cache first
+    let fontCss = localStorage.getItem(FONT_CSS_CACHE_KEY);
     
-    // Fetch custom CSS
-    const cssUrl = chrome.runtime.getURL('src/content/style.css');
-    const customResponse = await fetch(cssUrl);
-    const customCss = await customResponse.text();
+    if (!fontCss) {
+      // Fetch Google Fonts CSS and cache it
+      const fontResponse = await fetch('https://fonts.googleapis.com/css2?family=Lexend+Deca:wght@100..900&display=swap');
+      if (!fontResponse.ok) throw new Error('Font fetch failed');
+      fontCss = await fontResponse.text();
+      localStorage.setItem(FONT_CSS_CACHE_KEY, fontCss);
+    }
     
+    // Inject Google Fonts CSS (custom CSS is loaded via manifest)
     const style = document.createElement('style');
     style.id = 'fontchanger-lexend-deca';
-    style.textContent = fontCss + '\n' + customCss;
+    style.textContent = fontCss;
     document.head.appendChild(style);
     fontInjected = true;
   } catch (error) {
-    // Fallback: just inject custom CSS
-    const cssUrl = chrome.runtime.getURL('src/content/style.css');
-    const response = await fetch(cssUrl);
-    const cssText = await response.text();
-    const style = document.createElement('style');
-    style.id = 'fontchanger-lexend-deca';
-    style.textContent = cssText;
-    document.head.appendChild(style);
-    fontInjected = true;
+    // Try to use cached version if fetch fails
+    const cachedCss = localStorage.getItem(FONT_CSS_CACHE_KEY);
+    if (cachedCss) {
+      const style = document.createElement('style');
+      style.id = 'fontchanger-lexend-deca';
+      style.textContent = cachedCss;
+      document.head.appendChild(style);
+      fontInjected = true;
+    }
   }
 }
 
@@ -38,7 +42,13 @@ function expandComments() {
   const buttons = document.querySelectorAll('button');
   buttons.forEach(btn => {
     const text = (btn.textContent || '').toLowerCase();
-    if ((text.includes('more replies') || text.includes('view more comments') || text.includes('continue this thread')) && btn instanceof HTMLElement && btn.offsetParent !== null) {
+    // Only click buttons that are clearly comment expansion buttons, not navigation
+    if ((text.includes('more replies') || text.includes('view more comments') || text.includes('continue this thread')) 
+        && btn instanceof HTMLElement 
+        && btn.offsetParent !== null
+        && btn.type !== 'submit'
+        && !btn.closest('form')
+        && !btn.getAttribute('href')) {
       btn.click();
     }
   });
@@ -46,20 +56,46 @@ function expandComments() {
 
 function expandCollapsedComments() {
   // Find all expand buttons with button-small.button-plain.icon classes
+  // Only target buttons that are clearly comment-related
   const allExpandButtons = document.querySelectorAll('button.button-small.button-plain.icon, button.button-small.button-plain[class*="icon"]');
   allExpandButtons.forEach(btn => {
     if (btn instanceof HTMLElement && btn.offsetParent !== null) {
       const isDropdown = btn.closest('[role="menu"], [role="listbox"], [data-testid*="menu"], [data-testid*="dropdown"]');
-      if (!isDropdown) btn.click();
+      const hasHref = btn.getAttribute('href');
+      
+      // Check if button is inside a comment context
+      const isInComment = btn.closest('shreddit-comment, [data-testid*="comment"], .Comment, [class*="comment"]');
+      
+      // Check if button is in navigation/search areas (header, nav, search)
+      const isInNav = btn.closest('header, nav, [role="navigation"], [data-testid*="search"], [data-testid*="header"], form[action*="search"]');
+      
+      // Check aria-label or text for navigation/search keywords
+      const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
+      const buttonText = (btn.textContent || '').toLowerCase();
+      const isSearchOrNav = ariaLabel.includes('search') || ariaLabel.includes('navigate') || 
+                           buttonText.includes('search') || buttonText.includes('go to') ||
+                           btn.closest('a[href*="search"]');
+      
+      // Only click if it's in a comment context, not in nav/search, and not a dropdown
+      if (!isDropdown && !hasHref && isInComment && !isInNav && !isSearchOrNav) {
+        btn.click();
+      }
     }
   });
   
-  // Also handle collapsed shreddit-comment elements
+  // Also handle collapsed shreddit-comment elements - this is safer as it's scoped to comments
   document.querySelectorAll('shreddit-comment[collapsed], shreddit-comment[collapsed="true"]').forEach(node => {
     const btn = node.querySelector('button.button-small.button-plain') as HTMLElement;
     if (btn && btn.offsetParent !== null) {
       const isDropdown = btn.closest('[role="menu"], [role="listbox"]');
-      if (!isDropdown) btn.click();
+      const hasHref = btn.getAttribute('href');
+      // Additional check: ensure it's not a navigation button
+      const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
+      const isSearchOrNav = ariaLabel.includes('search') || ariaLabel.includes('navigate');
+      
+      if (!isDropdown && !hasHref && !isSearchOrNav) {
+        btn.click();
+      }
     }
   });
 }
@@ -74,7 +110,7 @@ function styleThreadline() {
       const threadlines = comment.shadowRoot.querySelectorAll('.threadline');
       threadlines.forEach(el => {
         if (el instanceof HTMLElement) {
-          el.style.marginLeft = '10px';
+          el.style.marginLeft = '6px';
         }
       });
     }
@@ -116,6 +152,27 @@ function blockAds() {
   });
 }
 
+function removeSeekerActionRow() {
+  // Remove seeker action row elements
+  document.querySelectorAll('[data-testid="seeker-action-row"]').forEach(el => {
+    if (el instanceof HTMLElement) el.remove();
+  });
+}
+
+function removeActionRow() {
+  // Remove action row elements
+  document.querySelectorAll('[data-testid="action-row"]').forEach(el => {
+    if (el instanceof HTMLElement) el.remove();
+  });
+}
+
+function removeAsyncLoaders() {
+  // Remove shreddit-async-loader elements
+  document.querySelectorAll('shreddit-async-loader').forEach(el => {
+    if (el instanceof HTMLElement) el.remove();
+  });
+}
+
 function runAll() {
   injectFont();
   expandComments();
@@ -124,6 +181,9 @@ function runAll() {
   styleThreadline();
   blockAds();
   removeMinHXL();
+  removeSeekerActionRow();
+  removeActionRow();
+  removeAsyncLoaders();
 }
 
 window.addEventListener('unhandledrejection', (e) => {
