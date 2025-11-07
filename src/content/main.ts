@@ -35,7 +35,7 @@ async function injectFont() {
 }
 
 function expandComments() {
-  const buttons = document.querySelectorAll('button, a');
+  const buttons = document.querySelectorAll('button');
   buttons.forEach(btn => {
     const text = (btn.textContent || '').toLowerCase();
     if ((text.includes('more replies') || text.includes('view more comments') || text.includes('continue this thread')) && btn instanceof HTMLElement && btn.offsetParent !== null) {
@@ -69,11 +69,28 @@ function removeMinHXL() {
 }
 
 function removeExpandedComments() {
-  const expandedButtons = document.querySelectorAll('button[aria-expanded="true"][aria-label="Toggle Comment Thread"]');
+  // Handle regular DOM buttons
+  const expandedButtons = document.querySelectorAll('button[aria-expanded="true"][aria-controls="comment-children"], button[aria-expanded="true"].button-small.button-plain.icon');
   expandedButtons.forEach(btn => {
     const parent = btn.parentElement;
     const grandparent = parent?.parentElement;
-    if (grandparent) grandparent.remove();
+    if (grandparent && grandparent.classList.contains('contents')) {
+      grandparent.remove();
+    }
+  });
+  
+  // Handle shadow DOM buttons inside shreddit-comment
+  document.querySelectorAll('shreddit-comment').forEach(comment => {
+    if (comment.shadowRoot) {
+      const shadowButtons = comment.shadowRoot.querySelectorAll('button[aria-expanded="true"], button.button-small.button-plain.icon');
+      shadowButtons.forEach(btn => {
+        const parent = btn.parentElement;
+        const grandparent = parent?.parentElement;
+        if (grandparent && grandparent.classList.contains('contents')) {
+          grandparent.remove();
+        }
+      });
+    }
   });
 }
 
