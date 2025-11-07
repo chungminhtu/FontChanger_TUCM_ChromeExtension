@@ -23,6 +23,10 @@ export default defineManifest({
     'sidePanel',
     'contentSettings',
   ],
+  web_accessible_resources: [{
+    resources: ['src/content/style.css'],
+    matches: ['https://www.reddit.com/*'],
+  }],
   side_panel: {
     default_path: 'src/sidepanel/index.html',
   },

@@ -2,52 +2,36 @@
 
 let fontInjected = false;
 
-const CSS = `
-  @font-face {
-    font-family: 'Lexend Deca';
-    font-style: normal;
-    font-weight: 100 900;
-    font-display: swap;
-    src: url(https://fonts.gstatic.com/s/lexenddeca/v26/K2FifZFYk-dHSE0UPPuwQ7CrD94i-NCKm-U48MxwKln2gEU4.woff2) format('woff2');
-    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-  }
-  html { font-size: 120% !important; }
-  *, *::before, *::after { font-family: 'Lexend Deca', sans-serif !important; }
-  input, textarea, select, button { font-family: 'Lexend Deca', sans-serif !important; }
-  .main-container, .main-container.fixed-sidebar, .main-container[class*="fixed-sidebar"] {
-    grid-template-columns: 1fr 316px !important;
-    border: none !important;
-  }
-  .main-container.flex-sidebar, .main-container[class*="flex-sidebar"] {
-    grid-template-columns: 1fr auto !important;
-    border: none !important;
-  }
-  main#main-content { max-width: none !important; width: 100% !important; margin: 0 !important; padding: 0 !important; }
-  main#main-content *[class*="max-w"] { max-width: none !important; }
-  #subgrid-container {
-    max-width: none !important;
-    width: 100% !important;
-    margin: 0 !important;
-    padding-left: 20px !important;
-    padding-right: 0 !important;
-    border: none !important;
-  }
-  [data-testid="ad-slot"], [data-testid="promoted"], [id*="ad"], [id*="promo"],
-  [class*="Promoted"], [class*="promoted"], [class*="Ad"], a[href*="/promoted/"],
-  iframe[src*="ads"], iframe[src*="doubleclick"] {
-    display: none !important;
-  }
-`;
-
-function injectFont() {
+async function injectFont() {
   if (fontInjected || document.getElementById('fontchanger-lexend-deca')) return;
   if (!document.head) return;
   
-  const style = document.createElement('style');
-  style.id = 'fontchanger-lexend-deca';
-  style.textContent = CSS;
-  document.head.appendChild(style);
-  fontInjected = true;
+  try {
+    // Fetch Google Fonts CSS and inject as inline to bypass CSP
+    const fontResponse = await fetch('https://fonts.googleapis.com/css2?family=Lexend+Deca:wght@100..900&display=swap');
+    const fontCss = await fontResponse.text();
+    
+    // Fetch custom CSS
+    const cssUrl = chrome.runtime.getURL('src/content/style.css');
+    const customResponse = await fetch(cssUrl);
+    const customCss = await customResponse.text();
+    
+    const style = document.createElement('style');
+    style.id = 'fontchanger-lexend-deca';
+    style.textContent = fontCss + '\n' + customCss;
+    document.head.appendChild(style);
+    fontInjected = true;
+  } catch (error) {
+    // Fallback: just inject custom CSS
+    const cssUrl = chrome.runtime.getURL('src/content/style.css');
+    const response = await fetch(cssUrl);
+    const cssText = await response.text();
+    const style = document.createElement('style');
+    style.id = 'fontchanger-lexend-deca';
+    style.textContent = cssText;
+    document.head.appendChild(style);
+    fontInjected = true;
+  }
 }
 
 function expandComments() {
@@ -61,20 +45,22 @@ function expandComments() {
 }
 
 function expandCollapsedComments() {
-  const comments = document.querySelectorAll('[data-testid="comment"], shreddit-comment');
-  comments.forEach(comment => {
-    const buttons = comment.querySelectorAll('button.button-small.button-plain');
-    buttons.forEach(btn => {
-      if (btn instanceof HTMLElement && btn.offsetParent !== null) {
-        const isDropdown = btn.closest('[role="menu"], [role="listbox"]');
-        if (!isDropdown) btn.click();
-      }
-    });
+  // Find all expand buttons with button-small.button-plain.icon classes
+  const allExpandButtons = document.querySelectorAll('button.button-small.button-plain.icon, button.button-small.button-plain[class*="icon"]');
+  allExpandButtons.forEach(btn => {
+    if (btn instanceof HTMLElement && btn.offsetParent !== null) {
+      const isDropdown = btn.closest('[role="menu"], [role="listbox"], [data-testid*="menu"], [data-testid*="dropdown"]');
+      if (!isDropdown) btn.click();
+    }
   });
   
-  document.querySelectorAll('shreddit-comment[collapsed]').forEach(node => {
+  // Also handle collapsed shreddit-comment elements
+  document.querySelectorAll('shreddit-comment[collapsed], shreddit-comment[collapsed="true"]').forEach(node => {
     const btn = node.querySelector('button.button-small.button-plain') as HTMLElement;
-    if (btn && btn.offsetParent !== null) btn.click();
+    if (btn && btn.offsetParent !== null) {
+      const isDropdown = btn.closest('[role="menu"], [role="listbox"]');
+      if (!isDropdown) btn.click();
+    }
   });
 }
 
