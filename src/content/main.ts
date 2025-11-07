@@ -17,18 +17,19 @@ const DEFAULT_SETTINGS: FontSettings = {
 };
 
 let typographyStyleElement: HTMLStyleElement | null = null;
+let fontsPreloaded = false;
 
 // Map font names to Google Fonts API names
 const FONT_MAP: Record<string, string> = {
-  'Lexend Deca': 'Lexend+Deca',
-  'Poppins': 'Poppins',
-  'Outfit': 'Outfit',
-  'Urbanist': 'Urbanist',
-  'Figtree': 'Figtree',
-  'Plus Jakarta Sans': 'Plus+Jakarta+Sans',
-  'DM Sans': 'DM+Sans',
-  'Manrope': 'Manrope',
-  'Rubik': 'Rubik',
+  'Lexend Deca': 'Lexend+Deca:wght@100..900',
+  'Poppins': 'Poppins:wght@100;200;300;400;500;600;700;800;900',
+  'Outfit': 'Outfit:wght@100..900',
+  'Urbanist': 'Urbanist:wght@100..900',
+  'Figtree': 'Figtree:wght@300..900',
+  'Plus Jakarta Sans': 'Plus+Jakarta+Sans:wght@200..800',
+  'DM Sans': 'DM+Sans:wght@400;500;600;700',
+  'Manrope': 'Manrope:wght@200..800',
+  'Rubik': 'Rubik:wght@300..900',
 };
 
 async function getSettings(): Promise<FontSettings> {
@@ -43,71 +44,128 @@ async function loadFont(fontFamily: string): Promise<void> {
   if (!document.head) return;
   
   const fontApiName = FONT_MAP[fontFamily] || FONT_MAP['Lexend Deca'];
-  const cacheKey = `fontchanger_${fontFamily.replace(/\s+/g, '_').toLowerCase()}_css`;
+  const fontStyleId = `fontchanger-font-style-${fontFamily.replace(/\s+/g, '-').toLowerCase()}`;
   
-  // Check if font style already exists
-  const existingStyle = document.getElementById('fontchanger-font-style');
+  // Check if font is already loaded (from preload)
+  const existingStyle = document.getElementById(fontStyleId);
   if (existingStyle) {
-    existingStyle.remove();
+    // Font already loaded, just wait a bit for it to be ready
+    if (document.fonts && document.fonts.ready) {
+      await document.fonts.ready;
+    } else {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return;
   }
   
+  // Fetch CSS via background script (bypasses CSP)
+  const fontUrl = `https://fonts.googleapis.com/css2?family=${fontApiName}&display=swap`;
+  console.log(`[FontChanger] Loading font "${fontFamily}" from Google Fonts via background script: ${fontUrl}`);
+  
   try {
-    // Check cache in chrome.storage
-    const cached = await new Promise<string | null>((resolve) => {
-      chrome.storage.local.get([cacheKey], (result) => {
-        resolve(result[cacheKey] || null);
-      });
-    });
-    
-    let fontCss = cached;
-    
-    if (!fontCss) {
-      // Fetch Google Fonts CSS
-      const fontUrl = `https://fonts.googleapis.com/css2?family=${fontApiName}:wght@100..900&display=swap`;
-      const fontResponse = await fetch(fontUrl);
-      if (!fontResponse.ok) throw new Error('Font fetch failed');
-      fontCss = await fontResponse.text();
-      
-      // Cache it
-      chrome.storage.local.set({ [cacheKey]: fontCss });
+    // Check if background script is available
+    if (!chrome.runtime || !chrome.runtime.sendMessage) {
+      throw new Error('Chrome runtime not available');
     }
     
-    // Inject Google Fonts CSS
+    const response = await new Promise<{ success: boolean; css?: string; error?: string }>((resolve) => {
+      const timeout = setTimeout(() => {
+        resolve({ success: false, error: 'Timeout waiting for background script response (10s)' });
+      }, 10000);
+      
+      try {
+        chrome.runtime.sendMessage(
+          { type: 'FETCH_FONT_CSS', fontUrl },
+          (response) => {
+            clearTimeout(timeout);
+            if (chrome.runtime.lastError) {
+              console.error('[FontChanger] Background script error:', chrome.runtime.lastError);
+              resolve({ success: false, error: chrome.runtime.lastError.message });
+            } else if (response && response.success) {
+              resolve(response);
+            } else {
+              resolve({ success: false, error: response?.error || 'No response from background script' });
+            }
+          }
+        );
+      } catch (error) {
+        clearTimeout(timeout);
+        resolve({ success: false, error: error instanceof Error ? error.message : 'Unknown error sending message' });
+      }
+    });
+    
+    if (!response.success) {
+      throw new Error(response.error || 'Failed to fetch font CSS');
+    }
+    
+    if (!response.css) {
+      throw new Error('Background script returned empty CSS');
+    }
+    
+    // Inject CSS as style tag (bypasses CSP font-src restriction)
     const style = document.createElement('style');
-    style.id = 'fontchanger-font-style';
-    style.textContent = fontCss;
+    style.id = fontStyleId;
+    style.textContent = response.css;
     document.head.appendChild(style);
+    
+    console.log(`[FontChanger] Font "${fontFamily}" loaded successfully, CSS length: ${response.css.length}`);
     
     // Wait for fonts to load
     if (document.fonts && document.fonts.ready) {
       await document.fonts.ready;
     } else {
-      // Fallback: wait a bit for fonts to load
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 300));
     }
   } catch (error) {
-    console.error('Failed to load font:', error);
-    // Try to use cached version if fetch fails
-    const cached = await new Promise<string | null>((resolve) => {
-      chrome.storage.local.get([cacheKey], (result) => {
-        resolve(result[cacheKey] || null);
-      });
-    });
-    
-    if (cached) {
-      const style = document.createElement('style');
-      style.id = 'fontchanger-font-style';
-      style.textContent = cached;
-      document.head.appendChild(style);
-      
-      // Wait for fonts to load
-      if (document.fonts && document.fonts.ready) {
-        await document.fonts.ready;
-      } else {
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-    }
+    console.error(`[FontChanger] Failed to load font "${fontFamily}":`, error);
+    // Don't throw - allow page to continue with fallback font
   }
+}
+
+async function loadAllFonts(): Promise<void> {
+  if (!document.head || fontsPreloaded) return;
+  
+  fontsPreloaded = true;
+  console.log('[FontChanger] Preloading all fonts...');
+  
+  // Load all fonts upfront so switching is instant (via background script to bypass CSP)
+  const loadPromises = Object.keys(FONT_MAP).map(async (fontFamily) => {
+    const fontApiName = FONT_MAP[fontFamily];
+    const fontStyleId = `fontchanger-font-style-${fontFamily.replace(/\s+/g, '-').toLowerCase()}`;
+    
+    // Check if already loaded
+    const existingStyle = document.getElementById(fontStyleId);
+    if (existingStyle) return;
+    
+    const fontUrl = `https://fonts.googleapis.com/css2?family=${fontApiName}&display=swap`;
+    
+    try {
+      const response = await new Promise<{ success: boolean; css?: string; error?: string }>((resolve) => {
+        chrome.runtime.sendMessage(
+          { type: 'FETCH_FONT_CSS', fontUrl },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              resolve({ success: false, error: chrome.runtime.lastError.message });
+            } else {
+              resolve(response || { success: false, error: 'No response' });
+            }
+          }
+        );
+      });
+      
+      if (response.success && response.css) {
+        const style = document.createElement('style');
+        style.id = fontStyleId;
+        style.textContent = response.css;
+        document.head.appendChild(style);
+      }
+    } catch (error) {
+      console.error(`[FontChanger] Failed to preload font "${fontFamily}":`, error);
+    }
+  });
+  
+  await Promise.all(loadPromises);
+  console.log('[FontChanger] All fonts preloaded');
 }
 
 function applyTypography(settings: FontSettings): void {
@@ -153,6 +211,9 @@ function applyTypography(settings: FontSettings): void {
 }
 
 async function injectFontAndTypography(): Promise<void> {
+  // Preload all fonts first (like original Lexend Deca)
+  await loadAllFonts();
+  
   const settings = await getSettings();
   await loadFont(settings.fontFamily);
   applyTypography(settings);

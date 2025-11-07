@@ -20,10 +20,17 @@ export default defineManifest({
     matches: ['https://www.reddit.com/*'],
     run_at: 'document_start',
   }],
+  background: {
+    service_worker: 'src/background.ts',
+  },
   permissions: [
     'sidePanel',
     'contentSettings',
     'storage',
+  ],
+  host_permissions: [
+    'https://fonts.googleapis.com/*',
+    'https://fonts.gstatic.com/*',
   ],
   side_panel: {
     default_path: 'src/sidepanel/index.html',
