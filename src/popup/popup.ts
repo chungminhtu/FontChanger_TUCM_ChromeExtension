@@ -144,6 +144,20 @@ async function initPopup() {
       ? 'Typography applies automatically on this site.'
       : 'Add this site so typography loads here.'
 
+  const allowedDomainsHtml = settings.allowedDomains.length > 0 ? `
+    <div class="allowed-domains">
+      <h3 class="allowed-domains-title">Allowed Sites</h3>
+      <div class="allowed-domains-list">
+        ${settings.allowedDomains.map(domain => `
+          <div class="allowed-domain-item">
+            <span class="allowed-domain-name">${domain}</span>
+            <button type="button" class="remove-domain-btn" data-remove-domain="${domain}">×</button>
+          </div>
+        `).join('')}
+      </div>
+      ${settings.allowedDomains.length > 1 ? '<button type="button" class="clear-domains-btn" data-action="clear-domains">Remove all</button>' : ''}
+    </div>` : '';
+
   const html = `
     <div class="header">
       <div class="extension-info">
@@ -165,6 +179,7 @@ async function initPopup() {
           ${allowButtonLabel}
         </button>
       </div>
+      ${allowedDomainsHtml}
     </div>
     <div class="layout">
       <section class="layout-column features-column">
@@ -191,13 +206,33 @@ async function initPopup() {
       if (!isDomainAllowed(currentHost, settings.allowedDomains)) {
         settings.allowedDomains.push(currentHost)
         await updateSettings(settings)
+        location.reload() // Reload popup to show new domain in list
       }
-      allowDomainButton.disabled = true
-      allowDomainButton.textContent = 'Site allowed'
-      const hint = document.querySelector('.site-actions-hint')
-      if (hint) hint.textContent = 'Typography applies automatically on this site.'
     })
   }
+
+  // Handle removing individual domains
+  document.addEventListener('click', async (event) => {
+    const target = event.target as HTMLElement
+
+    const removeBtn = target.closest('.remove-domain-btn') as HTMLButtonElement
+    if (removeBtn) {
+      const domain = removeBtn.getAttribute('data-remove-domain')
+      if (!domain) return
+
+      settings.allowedDomains = settings.allowedDomains.filter(d => d !== domain)
+      await updateSettings(settings)
+      location.reload() // Reload popup to update the list
+      return
+    }
+
+    const clearBtn = target.closest('.clear-domains-btn') as HTMLButtonElement
+    if (clearBtn) {
+      settings.allowedDomains = []
+      await updateSettings(settings)
+      location.reload() // Reload popup to update the list
+    }
+  })
 
   document.querySelectorAll('.feature-toggle-input').forEach((input) => {
     input.addEventListener('change', async (e) => {

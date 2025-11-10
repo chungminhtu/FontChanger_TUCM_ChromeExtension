@@ -473,20 +473,19 @@ function startObservers(): void {
   }
 }
 
-// Early check - don't run anything if domain list is empty (first install)
+// Early check - only run on allowed domains
 ;(async () => {
   const currentHost = window.location.hostname.toLowerCase()
   const settings = await getSettings()
-  
-  // If domain is not allowed, clear and stop
+
+  // If domain is not allowed, clear typography and stop
   if (!isDomainAllowed(currentHost, settings.allowedDomains)) {
     clearTypography()
     return
   }
-  
-  // Only start if domain is allowed
+
+  // Domain is allowed - start normal operation
   onReady(() => {
-    clearTypography()
     queueEnhancements()
     startObservers()
   })

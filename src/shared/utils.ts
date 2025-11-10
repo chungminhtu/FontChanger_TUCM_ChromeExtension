@@ -19,7 +19,7 @@ export function normalizeSettings(raw: Partial<FontSettings>): FontSettings {
 
   const allowedDomains = isLegacyDefault
     ? [...DEFAULT_ALLOWED_DOMAINS]
-    : Array.from(new Set([...DEFAULT_ALLOWED_DOMAINS, ...sanitizedDomains]))
+    : sanitizedDomains
 
   return {
     ...DEFAULT_SETTINGS,

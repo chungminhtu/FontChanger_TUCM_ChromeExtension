@@ -14,19 +14,16 @@ export default defineManifest({
     },
     default_popup: 'src/popup/popup.html',
   },
+  background: {
+    service_worker: 'src/background.ts',
+  },
   content_scripts: [{
     js: ['src/content/main.ts'],
     matches: ['https://*/*', 'http://*/*'],
     run_at: 'document_start',
   }],
-  background: {
-    service_worker: 'src/background.ts',
-  },
   permissions: [
-    'sidePanel',
-    'contentSettings',
     'storage',
-    'tabs',
   ],
   host_permissions: [
     'https://fonts.googleapis.com/*',

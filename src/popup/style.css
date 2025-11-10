@@ -444,4 +444,81 @@ select:disabled {
     border-color: rgba(139, 154, 255, 0.4);
     color: #7f86c9;
   }
+
+  .allowed-domains {
+    margin-top: 16px;
+    padding: 12px;
+    background: rgba(100, 108, 255, 0.08);
+    border-radius: 6px;
+    border: 1px solid rgba(100, 108, 255, 0.2);
+  }
+
+  .allowed-domains-title {
+    margin: 0 0 8px 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: #646cff;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .allowed-domains-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .allowed-domain-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 8px;
+    background: rgba(255, 255, 255, 0.6);
+    border-radius: 4px;
+    font-size: 13px;
+  }
+
+  .allowed-domain-name {
+    color: #1a1a1a;
+    font-weight: 500;
+  }
+
+  .remove-domain-btn {
+    background: none;
+    border: none;
+    color: #dc3545;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: bold;
+    padding: 2px 6px;
+    border-radius: 3px;
+    transition: background-color 0.2s;
+    min-width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .remove-domain-btn:hover {
+    background: rgba(220, 53, 69, 0.1);
+  }
+
+  .clear-domains-btn {
+    margin-top: 8px;
+    padding: 6px 12px;
+    background: rgba(220, 53, 69, 0.1);
+    border: 1px solid rgba(220, 53, 69, 0.3);
+    border-radius: 4px;
+    color: #dc3545;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    width: 100%;
+  }
+
+  .clear-domains-btn:hover {
+    background: rgba(220, 53, 69, 0.2);
+    border-color: rgba(220, 53, 69, 0.5);
+  }
 }
