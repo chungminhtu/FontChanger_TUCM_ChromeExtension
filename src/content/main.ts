@@ -1,50 +1,8 @@
 // FontChanger - Apply custom fonts and typography settings on Reddit
 
-type FeatureKey =
-  | 'typography'
-  | 'expandComments'
-  | 'expandCollapsedComments'
-  | 'removeExpandedComments'
-  | 'styleThreadline'
-  | 'blockAds'
-  | 'removeMinHXL'
-  | 'removeStaticRows';
-
-type FeatureToggles = Record<FeatureKey, boolean>;
-
-interface FontSettings {
-  fontFamily: string;
-  fontSize: number;
-  fontWeight: number;
-  lineHeight: number;
-  letterSpacing: number;
-  features: FeatureToggles;
-  allowedDomains: string[];
-}
-
-const DEFAULT_FEATURES: FeatureToggles = {
-  typography: true,
-  expandComments: true,
-  expandCollapsedComments: true,
-  removeExpandedComments: true,
-  styleThreadline: true,
-  blockAds: true,
-  removeMinHXL: true,
-  removeStaticRows: true,
-};
-
-const DEFAULT_ALLOWED_DOMAINS: string[] = [];
-const LEGACY_DEFAULT_ALLOWED_DOMAINS = ['www.reddit.com', 'old.reddit.com'];
-
-const DEFAULT_SETTINGS: FontSettings = {
-  fontFamily: 'Lexend Deca',
-  fontSize: 16,
-  fontWeight: 400,
-  lineHeight: 1.5,
-  letterSpacing: 0,
-  features: { ...DEFAULT_FEATURES },
-  allowedDomains: [...DEFAULT_ALLOWED_DOMAINS],
-};
+import type { FeatureKey, FeatureToggles, FontSettings } from '../shared/types'
+import { DEFAULT_SETTINGS } from '../shared/constants'
+import { normalizeSettings, isDomainAllowed } from '../shared/utils'
 
 let typographyStyleElement: HTMLStyleElement | null = null;
 let fontsPreloaded = false;
@@ -121,28 +79,6 @@ async function fetchFontCss(fontUrl: string, timeoutMs = REQUEST_TIMEOUT_MS): Pr
   });
 }
 
-function normalizeSettings(raw: Partial<FontSettings>): FontSettings {
-  const features: FeatureToggles = {
-    ...DEFAULT_FEATURES,
-    ...(raw.features ?? {}),
-  };
-  const sanitizedDomains = Array.isArray(raw.allowedDomains)
-    ? raw.allowedDomains
-        .filter((domain): domain is string => typeof domain === 'string' && domain.trim().length > 0)
-        .map((domain) => domain.trim().toLowerCase())
-    : [];
-  const isLegacyDefault =
-    sanitizedDomains.length === LEGACY_DEFAULT_ALLOWED_DOMAINS.length &&
-    LEGACY_DEFAULT_ALLOWED_DOMAINS.every((domain) => sanitizedDomains.includes(domain));
-  const allowedDomains = isLegacyDefault ? [...DEFAULT_ALLOWED_DOMAINS] : Array.from(new Set([...sanitizedDomains]));
-
-  return {
-    ...DEFAULT_SETTINGS,
-    ...raw,
-    features,
-    allowedDomains,
-  };
-}
 
 async function getSettings(): Promise<FontSettings> {
   return new Promise((resolve) => {
@@ -209,8 +145,17 @@ async function loadAllFonts(): Promise<void> {
 }
 
 function clearTypography(): void {
+  // Remove the tracked element if it exists
   typographyStyleElement?.remove();
   typographyStyleElement = null;
+  
+  // Also remove by ID in case the reference was lost (e.g., page reload)
+  if (document.head) {
+    const existingStyle = document.getElementById('fontchanger-typography-style');
+    if (existingStyle) {
+      existingStyle.remove();
+    }
+  }
 }
 
 function applyTypography(settings: FontSettings): void {
@@ -400,14 +345,14 @@ function runDomTasks(features: FeatureToggles): void {
 }
 
 async function applyEnhancements(): Promise<void> {
-  const settings = await getSettings();
-  const currentHost = window.location.hostname.toLowerCase();
-  const isAllowedDomain = settings.allowedDomains.includes(currentHost);
-  const isRedditDomain = /(^|\.)reddit\.com$/i.test(currentHost);
+  const currentHost = window.location.hostname.toLowerCase()
+  const settings = await getSettings()
+  const isAllowedDomain = isDomainAllowed(currentHost, settings.allowedDomains)
+  const isRedditDomain = /(^|\.)reddit\.com$/i.test(currentHost)
 
   if (!isAllowedDomain) {
-    clearTypography();
-    return;
+    clearTypography()
+    return
   }
 
   if (settings.features.typography) {
@@ -468,41 +413,37 @@ function startObservers(): void {
   }
 }
 
-// Initial kick-off
-queueEnhancements();
-
 onReady(() => {
-  queueEnhancements();
-  startObservers();
-});
+  clearTypography()
+  queueEnhancements()
+  startObservers()
+})
 
-// Listen for messages from popup
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'FONT_SETTINGS_CHANGED') {
-    const incoming = normalizeSettings(message.settings as Partial<FontSettings>);
+    const incoming = normalizeSettings(message.settings as Partial<FontSettings>)
 
-    (async () => {
+    ;(async () => {
       try {
-        if (!incoming.features.typography) {
-          clearTypography();
+        const currentHost = window.location.hostname.toLowerCase()
+        if (!isDomainAllowed(currentHost, incoming.allowedDomains) || !incoming.features.typography) {
+          clearTypography()
         }
-
-        queueEnhancements();
-        sendResponse({ success: true });
+        queueEnhancements()
+        sendResponse({ success: true })
       } catch (error) {
-        console.error('[FontChanger] Failed to apply font settings from popup:', error);
+        console.error('[FontChanger] Failed to apply font settings from popup:', error)
         sendResponse({
           success: false,
           error: error instanceof Error ? error.message : String(error),
-        });
+        })
       }
-    })();
+    })()
 
-    return true;
+    return true
   }
-
-  return false;
-});
+  return false
+})
 
 window.addEventListener('unhandledrejection', (e) => {
   if (e.reason?.name === 'AbortError') e.preventDefault();

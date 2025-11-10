@@ -1,62 +1,7 @@
 import './style.css'
-
-type FeatureKey =
-  | 'typography'
-  | 'expandComments'
-  | 'expandCollapsedComments'
-  | 'removeExpandedComments'
-  | 'styleThreadline'
-  | 'blockAds'
-  | 'removeMinHXL'
-  | 'removeStaticRows'
-
-type FeatureToggles = Record<FeatureKey, boolean>
-
-interface FontSettings {
-  fontFamily: string
-  fontSize: number
-  fontWeight: number
-  lineHeight: number
-  letterSpacing: number
-  features: FeatureToggles
-  allowedDomains: string[]
-}
-
-const FONTS = [
-  'Lexend Deca',
-  'Poppins',
-  'Outfit',
-  'Urbanist',
-  'Figtree',
-  'Plus Jakarta Sans',
-  'DM Sans',
-  'Manrope',
-  'Rubik',
-]
-
-const DEFAULT_FEATURES: FeatureToggles = {
-  typography: true,
-  expandComments: true,
-  expandCollapsedComments: true,
-  removeExpandedComments: true,
-  styleThreadline: true,
-  blockAds: true,
-  removeMinHXL: true,
-  removeStaticRows: true,
-}
-
-const DEFAULT_ALLOWED_DOMAINS: string[] = []
-const LEGACY_DEFAULT_ALLOWED_DOMAINS = ['www.reddit.com', 'old.reddit.com']
-
-const DEFAULT_SETTINGS: FontSettings = {
-  fontFamily: 'Lexend Deca',
-  fontSize: 16,
-  fontWeight: 400,
-  lineHeight: 1.5,
-  letterSpacing: 0,
-  features: { ...DEFAULT_FEATURES },
-  allowedDomains: [...DEFAULT_ALLOWED_DOMAINS],
-}
+import type { FeatureKey, FeatureToggles, FontSettings } from '../shared/types'
+import { DEFAULT_SETTINGS, FONTS } from '../shared/constants'
+import { normalizeSettings, parseHostname, sanitizeDomains, isDomainAllowed } from '../shared/utils'
 
 const FEATURE_INFO: Array<{ key: FeatureKey; label: string; description?: string }> = [
   { key: 'typography', label: 'Typography override', description: 'Apply custom font, size, weight, line height, and spacing' },
@@ -69,30 +14,6 @@ const FEATURE_INFO: Array<{ key: FeatureKey; label: string; description?: string
   { key: 'removeStaticRows', label: 'Remove seeker/action rows' },
 ]
 
-function normalizeSettings(raw: Partial<FontSettings>): FontSettings {
-  const features: FeatureToggles = {
-    ...DEFAULT_FEATURES,
-    ...(raw.features ?? {}),
-  }
-  const sanitizedDomains = Array.isArray(raw.allowedDomains)
-    ? raw.allowedDomains
-        .filter((domain): domain is string => typeof domain === 'string' && domain.trim().length > 0)
-        .map((domain) => domain.trim().toLowerCase())
-    : []
-  const isLegacyDefault =
-    sanitizedDomains.length === LEGACY_DEFAULT_ALLOWED_DOMAINS.length &&
-    LEGACY_DEFAULT_ALLOWED_DOMAINS.every((domain) => sanitizedDomains.includes(domain))
-  const allowedDomains = isLegacyDefault
-    ? [...DEFAULT_ALLOWED_DOMAINS]
-    : Array.from(new Set([...DEFAULT_ALLOWED_DOMAINS, ...sanitizedDomains]))
-
-  return {
-    ...DEFAULT_SETTINGS,
-    ...raw,
-    features,
-    allowedDomains,
-  }
-}
 
 async function loadSettings(): Promise<FontSettings> {
   return new Promise((resolve) => {
@@ -104,21 +25,14 @@ async function loadSettings(): Promise<FontSettings> {
 
 async function saveSettings(settings: FontSettings): Promise<void> {
   return new Promise((resolve) => {
-    const payload: FontSettings = {
-      ...settings,
-      features: { ...settings.features },
-      allowedDomains: Array.from(
-        new Set(
-          settings.allowedDomains
-            .map((domain) => domain.trim().toLowerCase())
-            .filter((domain) => domain.length > 0)
-        )
-      ),
-    }
-
-    chrome.storage.local.set(payload, () => {
-      resolve()
-    })
+    chrome.storage.local.set(
+      {
+        ...settings,
+        features: { ...settings.features },
+        allowedDomains: sanitizeDomains(settings.allowedDomains),
+      },
+      () => resolve()
+    )
   })
 }
 
@@ -128,19 +42,6 @@ async function getActiveTab(): Promise<chrome.tabs.Tab | undefined> {
       resolve(tabs[0])
     })
   })
-}
-
-function parseHostname(input?: string | null): string | null {
-  if (!input) return null
-  try {
-    const url = new URL(input)
-    if (url.protocol === 'http:' || url.protocol === 'https:') {
-      return url.hostname.toLowerCase()
-    }
-  } catch {
-    // ignore parse failures
-  }
-  return null
 }
 
 function createControlRow(
@@ -198,11 +99,11 @@ function createFeatureToggleList(features: FeatureToggles): string {
   `
 }
 
-function notifyContentScript(settings: FontSettings): void {
-  const payload = normalizeSettings(settings)
+async function updateSettings(settings: FontSettings): Promise<void> {
+  await saveSettings(settings)
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     if (tabs[0]?.id) {
-      chrome.tabs.sendMessage(tabs[0].id, { type: 'FONT_SETTINGS_CHANGED', settings: payload }).catch(() => {
+      chrome.tabs.sendMessage(tabs[0].id, { type: 'FONT_SETTINGS_CHANGED', settings }).catch(() => {
         // Ignore errors if content script is not ready
       })
     }
@@ -232,19 +133,14 @@ async function initPopup() {
   const extensionVersion = manifest.version || '1.0.0'
   const activeTab = await getActiveTab()
 
-  let currentHost: string | null = null
-  let canAllowDomain = false
-
-  currentHost = parseHostname(activeTab?.url) ?? parseHostname(activeTab?.pendingUrl)
-  canAllowDomain = Boolean(currentHost)
-
-  const isDomainAllowed = currentHost ? settings.allowedDomains.includes(currentHost) : false
+  const currentHost = parseHostname(activeTab?.url) ?? parseHostname(activeTab?.pendingUrl)
+  const domainAllowed = currentHost ? isDomainAllowed(currentHost, settings.allowedDomains) : false
   const domainDisplay = currentHost ?? 'No site detected'
-  const allowButtonLabel = !currentHost ? 'Unavailable' : isDomainAllowed ? 'Site allowed' : 'Allow this site'
-  const allowButtonDisabled = !currentHost || isDomainAllowed
+  const allowButtonLabel = !currentHost ? 'Unavailable' : domainAllowed ? 'Site allowed' : 'Allow this site'
+  const allowButtonDisabled = !currentHost || domainAllowed
   const allowStatusText = !currentHost
     ? 'Switch to a website tab and reopen the popup to allow it.'
-    : isDomainAllowed
+    : domainAllowed
       ? 'Typography applies automatically on this site.'
       : 'Add this site so typography loads here.'
 
@@ -290,96 +186,61 @@ async function initPopup() {
   setTypographyControlsEnabled(settings.features.typography)
 
   const allowDomainButton = document.getElementById('allow-domain-btn') as HTMLButtonElement | null
-  if (allowDomainButton && currentHost && canAllowDomain && !isDomainAllowed) {
+  if (allowDomainButton && currentHost && !domainAllowed) {
     allowDomainButton.addEventListener('click', async () => {
-      if (settings.allowedDomains.includes(currentHost)) {
-        allowDomainButton.disabled = true
-        allowDomainButton.textContent = 'Site allowed'
-        return
+      if (!isDomainAllowed(currentHost, settings.allowedDomains)) {
+        settings.allowedDomains.push(currentHost)
+        await updateSettings(settings)
       }
-
-      settings.allowedDomains.push(currentHost)
-      await saveSettings(settings)
-      notifyContentScript(settings)
-
       allowDomainButton.disabled = true
       allowDomainButton.textContent = 'Site allowed'
-
       const hint = document.querySelector('.site-actions-hint')
-      if (hint) {
-        hint.textContent = 'Typography applies automatically on this site.'
-      }
+      if (hint) hint.textContent = 'Typography applies automatically on this site.'
     })
   }
 
-  // Feature toggle handlers
   document.querySelectorAll('.feature-toggle-input').forEach((input) => {
     input.addEventListener('change', async (e) => {
       const target = e.target as HTMLInputElement
       const feature = target.dataset.feature as FeatureKey | undefined
       if (!feature) return
-
       settings.features[feature] = target.checked
-      await saveSettings(settings)
-      notifyContentScript(settings)
-
-      if (feature === 'typography') {
-        setTypographyControlsEnabled(target.checked)
-      }
+      await updateSettings(settings)
+      if (feature === 'typography') setTypographyControlsEnabled(target.checked)
     })
   })
 
-  // Font select handler
   const fontSelect = document.getElementById('font-select') as HTMLSelectElement
-  fontSelect.addEventListener('change', async (e) => {
-    const target = e.target as HTMLSelectElement
-    settings.fontFamily = target.value
-    await saveSettings(settings)
-    notifyContentScript(settings)
+  fontSelect.addEventListener('change', async () => {
+    settings.fontFamily = fontSelect.value
+    await updateSettings(settings)
   })
 
-  // Button handlers
+  const CONTROL_CONFIG: Record<string, { prop: keyof FontSettings; format: (v: number) => string }> = {
+    'Font Size': { prop: 'fontSize', format: (v) => `${v}px` },
+    'Font Weight': { prop: 'fontWeight', format: (v) => `${v}` },
+    'Line Height': { prop: 'lineHeight', format: (v) => v.toFixed(1) },
+    'Letter Spacing': { prop: 'letterSpacing', format: (v) => `${v}px` },
+  }
+
   document.querySelectorAll('.btn-decrease, .btn-increase').forEach((btn) => {
-    btn.addEventListener('click', async (e) => {
-      const target = e.target as HTMLElement
-      const control = target.getAttribute('data-control')!
-      const isDecrease = target.classList.contains('btn-decrease')
-      const valueEl = document.querySelector(`[data-value="${control}"]`) as HTMLElement
-      const min = parseFloat(target.getAttribute('data-min')!)
-      const max = parseFloat(target.getAttribute('data-max')!)
-      const step = parseFloat(target.getAttribute('data-step')!)
+    btn.addEventListener('click', async () => {
+      const control = btn.getAttribute('data-control')!
+      const config = CONTROL_CONFIG[control]
+      if (!config) return
 
-      let value: number
-      let format: (v: number) => string
+      const isDecrease = btn.classList.contains('btn-decrease')
+      const min = parseFloat(btn.getAttribute('data-min')!)
+      const max = parseFloat(btn.getAttribute('data-max')!)
+      const step = parseFloat(btn.getAttribute('data-step')!)
 
-      if (control === 'Font Size') {
-        value = settings.fontSize
-        value = isDecrease ? Math.max(min, value - step) : Math.min(max, value + step)
-        format = (v) => `${v}px`
-        settings.fontSize = value
-      } else if (control === 'Font Weight') {
-        value = settings.fontWeight
-        value = isDecrease ? Math.max(min, value - step) : Math.min(max, value + step)
-        format = (v) => `${v}`
-        settings.fontWeight = value
-      } else if (control === 'Line Height') {
-        value = settings.lineHeight
-        value = isDecrease ? Math.max(min, value - step) : Math.min(max, value + step)
-        value = Math.round(value * 10) / 10
-        format = (v) => v.toFixed(1)
-        settings.lineHeight = value
-      } else if (control === 'Letter Spacing') {
-        value = settings.letterSpacing
-        value = isDecrease ? Math.max(min, value - step) : Math.min(max, value + step)
-        format = (v) => `${v}px`
-        settings.letterSpacing = value
-      } else {
-        return
-      }
+      let value = settings[config.prop] as number
+      value = isDecrease ? Math.max(min, value - step) : Math.min(max, value + step)
+      if (control === 'Line Height') value = Math.round(value * 10) / 10
 
-      valueEl.textContent = format(value)
-      await saveSettings(settings)
-      notifyContentScript(settings)
+      settings[config.prop] = value as never
+      document.querySelector(`[data-value="${control}"]`)!.textContent = config.format(value)
+      await updateSettings(settings)
     })
   })
 }
