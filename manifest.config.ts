@@ -24,6 +24,7 @@ export default defineManifest({
   }],
   permissions: [
     'storage',
+    'tabs',
   ],
   host_permissions: [
     'https://fonts.googleapis.com/*',
