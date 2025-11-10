@@ -17,7 +17,7 @@ export default defineManifest({
   content_scripts: [{
     js: ['src/content/main.ts'],
     css: ['src/content/style.css'],
-    matches: ['https://www.reddit.com/*'],
+    matches: ['https://*/*', 'http://*/*'],
     run_at: 'document_start',
   }],
   background: {
@@ -27,6 +27,7 @@ export default defineManifest({
     'sidePanel',
     'contentSettings',
     'storage',
+    'tabs',
   ],
   host_permissions: [
     'https://fonts.googleapis.com/*',

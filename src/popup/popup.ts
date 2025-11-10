@@ -19,6 +19,7 @@ interface FontSettings {
   lineHeight: number
   letterSpacing: number
   features: FeatureToggles
+  allowedDomains: string[]
 }
 
 const FONTS = [
@@ -44,6 +45,9 @@ const DEFAULT_FEATURES: FeatureToggles = {
   removeStaticRows: true,
 }
 
+const DEFAULT_ALLOWED_DOMAINS: string[] = []
+const LEGACY_DEFAULT_ALLOWED_DOMAINS = ['www.reddit.com', 'old.reddit.com']
+
 const DEFAULT_SETTINGS: FontSettings = {
   fontFamily: 'Lexend Deca',
   fontSize: 16,
@@ -51,6 +55,7 @@ const DEFAULT_SETTINGS: FontSettings = {
   lineHeight: 1.5,
   letterSpacing: 0,
   features: { ...DEFAULT_FEATURES },
+  allowedDomains: [...DEFAULT_ALLOWED_DOMAINS],
 }
 
 const FEATURE_INFO: Array<{ key: FeatureKey; label: string; description?: string }> = [
@@ -69,11 +74,23 @@ function normalizeSettings(raw: Partial<FontSettings>): FontSettings {
     ...DEFAULT_FEATURES,
     ...(raw.features ?? {}),
   }
+  const sanitizedDomains = Array.isArray(raw.allowedDomains)
+    ? raw.allowedDomains
+        .filter((domain): domain is string => typeof domain === 'string' && domain.trim().length > 0)
+        .map((domain) => domain.trim().toLowerCase())
+    : []
+  const isLegacyDefault =
+    sanitizedDomains.length === LEGACY_DEFAULT_ALLOWED_DOMAINS.length &&
+    LEGACY_DEFAULT_ALLOWED_DOMAINS.every((domain) => sanitizedDomains.includes(domain))
+  const allowedDomains = isLegacyDefault
+    ? [...DEFAULT_ALLOWED_DOMAINS]
+    : Array.from(new Set([...DEFAULT_ALLOWED_DOMAINS, ...sanitizedDomains]))
 
   return {
     ...DEFAULT_SETTINGS,
     ...raw,
     features,
+    allowedDomains,
   }
 }
 
@@ -90,12 +107,40 @@ async function saveSettings(settings: FontSettings): Promise<void> {
     const payload: FontSettings = {
       ...settings,
       features: { ...settings.features },
+      allowedDomains: Array.from(
+        new Set(
+          settings.allowedDomains
+            .map((domain) => domain.trim().toLowerCase())
+            .filter((domain) => domain.length > 0)
+        )
+      ),
     }
 
     chrome.storage.local.set(payload, () => {
       resolve()
     })
   })
+}
+
+async function getActiveTab(): Promise<chrome.tabs.Tab | undefined> {
+  return new Promise((resolve) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      resolve(tabs[0])
+    })
+  })
+}
+
+function parseHostname(input?: string | null): string | null {
+  if (!input) return null
+  try {
+    const url = new URL(input)
+    if (url.protocol === 'http:' || url.protocol === 'https:') {
+      return url.hostname.toLowerCase()
+    }
+  } catch {
+    // ignore parse failures
+  }
+  return null
 }
 
 function createControlRow(
@@ -185,12 +230,44 @@ async function initPopup() {
   const manifest = chrome.runtime.getManifest()
   const extensionName = manifest.name || 'Font Changer'
   const extensionVersion = manifest.version || '1.0.0'
+  const activeTab = await getActiveTab()
+
+  let currentHost: string | null = null
+  let canAllowDomain = false
+
+  currentHost = parseHostname(activeTab?.url) ?? parseHostname(activeTab?.pendingUrl)
+  canAllowDomain = Boolean(currentHost)
+
+  const isDomainAllowed = currentHost ? settings.allowedDomains.includes(currentHost) : false
+  const domainDisplay = currentHost ?? 'No site detected'
+  const allowButtonLabel = !currentHost ? 'Unavailable' : isDomainAllowed ? 'Site allowed' : 'Allow this site'
+  const allowButtonDisabled = !currentHost || isDomainAllowed
+  const allowStatusText = !currentHost
+    ? 'Switch to a website tab and reopen the popup to allow it.'
+    : isDomainAllowed
+      ? 'Typography applies automatically on this site.'
+      : 'Add this site so typography loads here.'
 
   const html = `
     <div class="header">
       <div class="extension-info">
         <span class="extension-name">${extensionName}</span>
         <span class="extension-version">v${extensionVersion}</span>
+      </div>
+      <div class="site-actions">
+        <div class="site-actions-meta">
+          <span class="site-actions-label">This site</span>
+          <span class="current-domain" title="${domainDisplay}">${domainDisplay}</span>
+          <span class="site-actions-hint">${allowStatusText}</span>
+        </div>
+        <button
+          type="button"
+          id="allow-domain-btn"
+          ${allowButtonDisabled ? 'disabled' : ''}
+          ${currentHost ? `data-domain="${currentHost}"` : ''}
+        >
+          ${allowButtonLabel}
+        </button>
       </div>
     </div>
     <div class="layout">
@@ -211,6 +288,29 @@ async function initPopup() {
   document.querySelector('#app')!.innerHTML = html
 
   setTypographyControlsEnabled(settings.features.typography)
+
+  const allowDomainButton = document.getElementById('allow-domain-btn') as HTMLButtonElement | null
+  if (allowDomainButton && currentHost && canAllowDomain && !isDomainAllowed) {
+    allowDomainButton.addEventListener('click', async () => {
+      if (settings.allowedDomains.includes(currentHost)) {
+        allowDomainButton.disabled = true
+        allowDomainButton.textContent = 'Site allowed'
+        return
+      }
+
+      settings.allowedDomains.push(currentHost)
+      await saveSettings(settings)
+      notifyContentScript(settings)
+
+      allowDomainButton.disabled = true
+      allowDomainButton.textContent = 'Site allowed'
+
+      const hint = document.querySelector('.site-actions-hint')
+      if (hint) {
+        hint.textContent = 'Typography applies automatically on this site.'
+      }
+    })
+  }
 
   // Feature toggle handlers
   document.querySelectorAll('.feature-toggle-input').forEach((input) => {

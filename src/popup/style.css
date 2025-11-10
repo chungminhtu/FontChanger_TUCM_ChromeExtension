@@ -34,6 +34,9 @@ body {
 .header {
   padding-bottom: 12px;
   border-bottom: 3px solid #646cff;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .extension-info {
@@ -57,6 +60,49 @@ body {
   background: rgba(100, 108, 255, 0.1);
   padding: 2px 8px;
   border-radius: 12px;
+}
+
+.site-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(100, 108, 255, 0.2);
+  border-radius: 8px;
+}
+
+.site-actions-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.site-actions-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #646cff;
+  letter-spacing: 0.6px;
+}
+
+.current-domain {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1a1a1a;
+  word-break: break-word;
+}
+
+.site-actions-hint {
+  font-size: 12px;
+  color: #4a4a4a;
+}
+
+.site-actions button {
+  padding: 8px 16px;
+  font-size: 13px;
+  min-width: 140px;
 }
 
 .layout {
@@ -295,6 +341,23 @@ select:disabled {
   .extension-version {
     color: #8b9aff;
     background: rgba(100, 108, 255, 0.2);
+  }
+
+  .site-actions {
+    background: rgba(42, 42, 42, 0.7);
+    border-color: rgba(100, 108, 255, 0.3);
+  }
+
+  .site-actions-label {
+    color: #8b9aff;
+  }
+
+  .current-domain {
+    color: #e0e0e0;
+  }
+
+  .site-actions-hint {
+    color: #b0b7ff;
   }
 
   .control-group {

@@ -19,6 +19,7 @@ interface FontSettings {
   lineHeight: number;
   letterSpacing: number;
   features: FeatureToggles;
+  allowedDomains: string[];
 }
 
 const DEFAULT_FEATURES: FeatureToggles = {
@@ -32,6 +33,9 @@ const DEFAULT_FEATURES: FeatureToggles = {
   removeStaticRows: true,
 };
 
+const DEFAULT_ALLOWED_DOMAINS: string[] = [];
+const LEGACY_DEFAULT_ALLOWED_DOMAINS = ['www.reddit.com', 'old.reddit.com'];
+
 const DEFAULT_SETTINGS: FontSettings = {
   fontFamily: 'Lexend Deca',
   fontSize: 16,
@@ -39,6 +43,7 @@ const DEFAULT_SETTINGS: FontSettings = {
   lineHeight: 1.5,
   letterSpacing: 0,
   features: { ...DEFAULT_FEATURES },
+  allowedDomains: [...DEFAULT_ALLOWED_DOMAINS],
 };
 
 let typographyStyleElement: HTMLStyleElement | null = null;
@@ -121,11 +126,21 @@ function normalizeSettings(raw: Partial<FontSettings>): FontSettings {
     ...DEFAULT_FEATURES,
     ...(raw.features ?? {}),
   };
+  const sanitizedDomains = Array.isArray(raw.allowedDomains)
+    ? raw.allowedDomains
+        .filter((domain): domain is string => typeof domain === 'string' && domain.trim().length > 0)
+        .map((domain) => domain.trim().toLowerCase())
+    : [];
+  const isLegacyDefault =
+    sanitizedDomains.length === LEGACY_DEFAULT_ALLOWED_DOMAINS.length &&
+    LEGACY_DEFAULT_ALLOWED_DOMAINS.every((domain) => sanitizedDomains.includes(domain));
+  const allowedDomains = isLegacyDefault ? [...DEFAULT_ALLOWED_DOMAINS] : Array.from(new Set([...sanitizedDomains]));
 
   return {
     ...DEFAULT_SETTINGS,
     ...raw,
     features,
+    allowedDomains,
   };
 }
 
@@ -386,6 +401,14 @@ function runDomTasks(features: FeatureToggles): void {
 
 async function applyEnhancements(): Promise<void> {
   const settings = await getSettings();
+  const currentHost = window.location.hostname.toLowerCase();
+  const isAllowedDomain = settings.allowedDomains.includes(currentHost);
+  const isRedditDomain = /(^|\.)reddit\.com$/i.test(currentHost);
+
+  if (!isAllowedDomain) {
+    clearTypography();
+    return;
+  }
 
   if (settings.features.typography) {
     try {
@@ -400,7 +423,9 @@ async function applyEnhancements(): Promise<void> {
     clearTypography();
   }
 
-  runDomTasks(settings.features);
+  if (isRedditDomain) {
+    runDomTasks(settings.features);
+  }
 }
 
 let activeRun: Promise<void> | null = null;
