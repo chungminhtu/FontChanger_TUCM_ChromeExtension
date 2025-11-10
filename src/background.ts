@@ -73,7 +73,7 @@ async function convertFontUrlsToDataUris(css: string): Promise<string> {
   }
 }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'FETCH_FONT_CSS') {
     const fontUrl = message.fontUrl;
     

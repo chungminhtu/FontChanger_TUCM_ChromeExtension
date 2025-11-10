@@ -344,6 +344,64 @@ function runDomTasks(features: FeatureToggles): void {
   });
 }
 
+function injectRedditCSS(): void {
+  // Only inject if not already present
+  if (document.getElementById('fontchanger-reddit-css')) return;
+
+  const css = `
+    .main-container,
+    .main-container.fixed-sidebar,
+    .main-container[class*="fixed-sidebar"] {
+      grid-template-columns: 1fr 316px !important;
+      border: none !important;
+    }
+
+    .main-container.flex-sidebar,
+    .main-container[class*="flex-sidebar"] {
+      grid-template-columns: 1fr auto !important;
+      border: none !important;
+    }
+
+    main#main-content {
+      max-width: none !important;
+      width: 100% !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+
+    main#main-content *[class*="max-w"] {
+      max-width: none !important;
+    }
+
+    #subgrid-container {
+      max-width: none !important;
+      width: 100% !important;
+      margin: 0 !important;
+      padding-left: 20px !important;
+      padding-right: 0 !important;
+      border: none !important;
+    }
+
+    [data-testid="ad-slot"],
+    [data-testid="promoted"],
+    [id*="ad"],
+    [id*="promo"],
+    [class*="Promoted"],
+    [class*="promoted"],
+    [class*="Ad"],
+    a[href*="/promoted/"],
+    iframe[src*="ads"],
+    iframe[src*="doubleclick"] {
+      display: none !important;
+    }
+  `;
+
+  const style = document.createElement('style');
+  style.id = 'fontchanger-reddit-css';
+  style.textContent = css;
+  document.head?.appendChild(style);
+}
+
 async function applyEnhancements(): Promise<void> {
   const currentHost = window.location.hostname.toLowerCase()
   const settings = await getSettings()
@@ -370,6 +428,8 @@ async function applyEnhancements(): Promise<void> {
 
   if (isRedditDomain) {
     runDomTasks(settings.features);
+    // Inject Reddit-specific CSS only on Reddit domains
+    injectRedditCSS();
   }
 }
 
@@ -413,11 +473,24 @@ function startObservers(): void {
   }
 }
 
-onReady(() => {
-  clearTypography()
-  queueEnhancements()
-  startObservers()
-})
+// Early check - don't run anything if domain list is empty (first install)
+;(async () => {
+  const currentHost = window.location.hostname.toLowerCase()
+  const settings = await getSettings()
+  
+  // If domain is not allowed, clear and stop
+  if (!isDomainAllowed(currentHost, settings.allowedDomains)) {
+    clearTypography()
+    return
+  }
+  
+  // Only start if domain is allowed
+  onReady(() => {
+    clearTypography()
+    queueEnhancements()
+    startObservers()
+  })
+})()
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'FONT_SETTINGS_CHANGED') {

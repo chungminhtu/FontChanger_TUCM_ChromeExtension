@@ -16,7 +16,6 @@ export default defineManifest({
   },
   content_scripts: [{
     js: ['src/content/main.ts'],
-    css: ['src/content/style.css'],
     matches: ['https://*/*', 'http://*/*'],
     run_at: 'document_start',
   }],

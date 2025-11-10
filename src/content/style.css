@@ -46,4 +46,3 @@ iframe[src*="ads"],
 iframe[src*="doubleclick"] {
   display: none !important;
 }
-
