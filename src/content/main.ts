@@ -1,12 +1,36 @@
 // FontChanger - Apply custom fonts and typography settings on Reddit
 
+type FeatureKey =
+  | 'typography'
+  | 'expandComments'
+  | 'expandCollapsedComments'
+  | 'removeExpandedComments'
+  | 'styleThreadline'
+  | 'blockAds'
+  | 'removeMinHXL'
+  | 'removeStaticRows';
+
+type FeatureToggles = Record<FeatureKey, boolean>;
+
 interface FontSettings {
   fontFamily: string;
   fontSize: number;
   fontWeight: number;
   lineHeight: number;
   letterSpacing: number;
+  features: FeatureToggles;
 }
+
+const DEFAULT_FEATURES: FeatureToggles = {
+  typography: true,
+  expandComments: true,
+  expandCollapsedComments: true,
+  removeExpandedComments: true,
+  styleThreadline: true,
+  blockAds: true,
+  removeMinHXL: true,
+  removeStaticRows: true,
+};
 
 const DEFAULT_SETTINGS: FontSettings = {
   fontFamily: 'Lexend Deca',
@@ -14,6 +38,7 @@ const DEFAULT_SETTINGS: FontSettings = {
   fontWeight: 400,
   lineHeight: 1.5,
   letterSpacing: 0,
+  features: { ...DEFAULT_FEATURES },
 };
 
 let typographyStyleElement: HTMLStyleElement | null = null;
@@ -40,7 +65,7 @@ const COMMENT_BUTTON_SELECTOR = 'shreddit-comment, [data-testid*="comment"], .Co
 const DROPDOWN_SELECTOR = '[role="menu"], [role="listbox"], [data-testid*="menu"], [data-testid*="dropdown"]';
 const NAVIGATION_SELECTOR = 'header, nav, [role="navigation"], [data-testid*="search"], [data-testid*="header"], form[action*="search"]';
 const AD_SELECTORS = ['[data-testid="ad-slot"]', '[data-testid="promoted"]', '[id*="ad"]', '[id*="promo"]', '[class*="Promoted"]', 'a[href*="/promoted/"]', 'iframe[src*="ads"]'];
-const STATIC_REMOVAL_SELECTORS = ['[data-testid="seeker-action-row"]', '[data-testid="action-row"]', 'shreddit-async-loader'];
+const STATIC_REMOVAL_SELECTORS = ['[data-testid="seeker-action-row"]', '[data-testid="action-row"]'];
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -91,10 +116,23 @@ async function fetchFontCss(fontUrl: string, timeoutMs = REQUEST_TIMEOUT_MS): Pr
   });
 }
 
+function normalizeSettings(raw: Partial<FontSettings>): FontSettings {
+  const features: FeatureToggles = {
+    ...DEFAULT_FEATURES,
+    ...(raw.features ?? {}),
+  };
+
+  return {
+    ...DEFAULT_SETTINGS,
+    ...raw,
+    features,
+  };
+}
+
 async function getSettings(): Promise<FontSettings> {
   return new Promise((resolve) => {
     chrome.storage.local.get(DEFAULT_SETTINGS, (result) => {
-      resolve(result as FontSettings);
+      resolve(normalizeSettings(result as Partial<FontSettings>));
     });
   });
 }
@@ -155,15 +193,16 @@ async function loadAllFonts(): Promise<void> {
   console.log('[FontChanger] All fonts preloaded');
 }
 
+function clearTypography(): void {
+  typographyStyleElement?.remove();
+  typographyStyleElement = null;
+}
+
 function applyTypography(settings: FontSettings): void {
   if (!document.head) return;
-  
-  // Remove existing typography style if it exists
-  if (typographyStyleElement) {
-    typographyStyleElement.remove();
-  }
-  
-  // Create CSS to apply typography settings
+
+  clearTypography();
+
   const css = `
     :root {
       --fontchanger-font-family: '${settings.fontFamily}', sans-serif;
@@ -203,21 +242,8 @@ function applyTypography(settings: FontSettings): void {
   style.textContent = css;
   document.head.appendChild(style);
   typographyStyleElement = style;
-  
-  // Force a reflow to ensure font is applied
+
   void document.body.offsetHeight;
-}
-
-async function injectFontAndTypography(): Promise<void> {
-  await loadAllFonts();
-
-  const settings = await getSettings();
-  try {
-    await loadFont(settings.fontFamily);
-  } catch (error) {
-    console.warn(`[FontChanger] Continuing with fallback fonts after failing to load "${settings.fontFamily}":`, error);
-  }
-  applyTypography(settings);
 }
 
 function expandComments() {
@@ -334,7 +360,9 @@ function removeStaticRows() {
   });
 }
 
-const DOM_TASKS: Array<() => void> = [
+type DomFeatureKey = Exclude<FeatureKey, 'typography'>;
+
+const DOM_TASKS: Record<DomFeatureKey, () => void> = {
   expandComments,
   expandCollapsedComments,
   removeExpandedComments,
@@ -342,26 +370,37 @@ const DOM_TASKS: Array<() => void> = [
   blockAds,
   removeMinHXL,
   removeStaticRows,
-];
+};
 
-function runDomTasks(): void {
-  DOM_TASKS.forEach((task) => {
+function runDomTasks(features: FeatureToggles): void {
+  (Object.entries(DOM_TASKS) as Array<[DomFeatureKey, () => void]>).forEach(([key, task]) => {
+    if (!features[key]) return;
+
     try {
       task();
     } catch (error) {
-      console.error(`[FontChanger] Task ${task.name || 'anonymous'} failed:`, error);
+      console.error(`[FontChanger] Task ${task.name || key} failed:`, error);
     }
   });
 }
 
 async function applyEnhancements(): Promise<void> {
-  try {
-    await injectFontAndTypography();
-  } catch (error) {
-    console.error('[FontChanger] Failed to inject font and typography settings:', error);
+  const settings = await getSettings();
+
+  if (settings.features.typography) {
+    try {
+      await loadAllFonts();
+      await loadFont(settings.fontFamily);
+      applyTypography(settings);
+    } catch (error) {
+      console.error('[FontChanger] Failed to apply typography settings:', error);
+      clearTypography();
+    }
+  } else {
+    clearTypography();
   }
 
-  runDomTasks();
+  runDomTasks(settings.features);
 }
 
 let activeRun: Promise<void> | null = null;
@@ -415,15 +454,15 @@ onReady(() => {
 // Listen for messages from popup
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'FONT_SETTINGS_CHANGED') {
-    const settings = message.settings as FontSettings;
+    const incoming = normalizeSettings(message.settings as Partial<FontSettings>);
 
     (async () => {
       try {
-        await loadFont(settings.fontFamily).catch((error) => {
-          console.warn(`[FontChanger] Unable to load font "${settings.fontFamily}" from popup:`, error);
-        });
+        if (!incoming.features.typography) {
+          clearTypography();
+        }
 
-        applyTypography(settings);
+        queueEnhancements();
         sendResponse({ success: true });
       } catch (error) {
         console.error('[FontChanger] Failed to apply font settings from popup:', error);
@@ -434,7 +473,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       }
     })();
 
-    queueEnhancements();
     return true;
   }
 

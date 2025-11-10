@@ -1,11 +1,24 @@
 import './style.css'
 
+type FeatureKey =
+  | 'typography'
+  | 'expandComments'
+  | 'expandCollapsedComments'
+  | 'removeExpandedComments'
+  | 'styleThreadline'
+  | 'blockAds'
+  | 'removeMinHXL'
+  | 'removeStaticRows'
+
+type FeatureToggles = Record<FeatureKey, boolean>
+
 interface FontSettings {
   fontFamily: string
   fontSize: number
   fontWeight: number
   lineHeight: number
   letterSpacing: number
+  features: FeatureToggles
 }
 
 const FONTS = [
@@ -20,25 +33,66 @@ const FONTS = [
   'Rubik',
 ]
 
+const DEFAULT_FEATURES: FeatureToggles = {
+  typography: true,
+  expandComments: true,
+  expandCollapsedComments: true,
+  removeExpandedComments: true,
+  styleThreadline: true,
+  blockAds: true,
+  removeMinHXL: true,
+  removeStaticRows: true,
+}
+
 const DEFAULT_SETTINGS: FontSettings = {
   fontFamily: 'Lexend Deca',
   fontSize: 16,
   fontWeight: 400,
   lineHeight: 1.5,
   letterSpacing: 0,
+  features: { ...DEFAULT_FEATURES },
+}
+
+const FEATURE_INFO: Array<{ key: FeatureKey; label: string; description?: string }> = [
+  { key: 'typography', label: 'Typography override', description: 'Apply custom font, size, weight, line height, and spacing' },
+  { key: 'expandComments', label: 'Expand “more replies” buttons' },
+  { key: 'expandCollapsedComments', label: 'Uncollapse hidden comments' },
+  { key: 'removeExpandedComments', label: 'Remove empty “expanded” rows' },
+  { key: 'styleThreadline', label: 'Tighten comment threadlines' },
+  { key: 'blockAds', label: 'Hide promoted posts and ads' },
+  { key: 'removeMinHXL', label: 'Remove tall spacer rows' },
+  { key: 'removeStaticRows', label: 'Remove seeker/action rows' },
+]
+
+function normalizeSettings(raw: Partial<FontSettings>): FontSettings {
+  const features: FeatureToggles = {
+    ...DEFAULT_FEATURES,
+    ...(raw.features ?? {}),
+  }
+
+  return {
+    ...DEFAULT_SETTINGS,
+    ...raw,
+    features,
+  }
 }
 
 async function loadSettings(): Promise<FontSettings> {
   return new Promise((resolve) => {
     chrome.storage.local.get(DEFAULT_SETTINGS, (result) => {
-      resolve(result as FontSettings)
+      resolve(normalizeSettings(result as Partial<FontSettings>))
     })
   })
 }
 
 async function saveSettings(settings: FontSettings): Promise<void> {
   return new Promise((resolve) => {
-    chrome.storage.local.set(settings, () => {
+    const payload: FontSettings = {
+      ...settings,
+      features: { ...settings.features },
+    }
+
+    chrome.storage.local.set(payload, () => {
       resolve()
     })
   })
@@ -50,16 +104,15 @@ function createControlRow(
   min: number,
   max: number,
   step: number,
-  format: (val: number) => string,
-  onChange: (val: number) => void
+  format: (val: number) => string
 ): string {
   return `
     <div class="control-group">
       <label>${label}</label>
       <div class="control-row">
-        <button type="button" class="btn-decrease" data-control="${label}" data-min="${min}" data-max="${max}" data-step="${step}">-</button>
-        <span class="control-value" data-value="${label}">${format(value)}</span>
-        <button type="button" class="btn-increase" data-control="${label}" data-min="${min}" data-max="${max}" data-step="${step}">+</button>
+        <button type="button" class="btn-decrease" data-control="${label}" data-min="${min}" data-max="${max}" data-step="${step}" data-typography-control="true">-</button>
+        <span class="control-value" data-value="${label}" data-typography-display="true">${format(value)}</span>
+        <button type="button" class="btn-increase" data-control="${label}" data-min="${min}" data-max="${max}" data-step="${step}" data-typography-control="true">+</button>
       </div>
     </div>
   `
@@ -72,18 +125,58 @@ function createFontSelect(currentFont: string): string {
   return `
     <div class="control-group">
       <label>Font Family</label>
-      <select id="font-select">${options}</select>
+      <select id="font-select" data-typography-control="true">${options}</select>
+    </div>
+  `
+}
+
+function createFeatureToggleList(features: FeatureToggles): string {
+  const items = FEATURE_INFO.map(({ key, label, description }) => {
+    const checked = features[key] ? 'checked' : ''
+    const desc = description ? `<span class="toggle-description">${description}</span>` : ''
+    return `
+      <label class="feature-toggle">
+        <input type="checkbox" class="feature-toggle-input" data-feature="${key}" ${checked} />
+        <span class="feature-toggle-label">
+          <span class="feature-toggle-title">${label}</span>
+          ${desc}
+        </span>
+      </label>
+    `
+  }).join('')
+
+  return `
+    <div class="feature-section">
+      <h2 class="section-title">Features</h2>
+      <div class="feature-list">${items}</div>
     </div>
   `
 }
 
 function notifyContentScript(settings: FontSettings): void {
+  const payload = normalizeSettings(settings)
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     if (tabs[0]?.id) {
-      chrome.tabs.sendMessage(tabs[0].id, { type: 'FONT_SETTINGS_CHANGED', settings }).catch(() => {
+      chrome.tabs.sendMessage(tabs[0].id, { type: 'FONT_SETTINGS_CHANGED', settings: payload }).catch(() => {
         // Ignore errors if content script is not ready
       })
     }
+  })
+}
+
+function setTypographyControlsEnabled(enabled: boolean): void {
+  document.querySelectorAll('[data-typography-control]').forEach((el) => {
+    if ('disabled' in el) {
+      ;(el as HTMLInputElement | HTMLButtonElement | HTMLSelectElement).disabled = !enabled
+    }
+  })
+
+  document.querySelectorAll('[data-typography-section]').forEach((section) => {
+    section.classList.toggle('is-disabled', !enabled)
+  })
+
+  document.querySelectorAll('[data-typography-display]').forEach((el) => {
+    el.classList.toggle('is-disabled', !enabled)
   })
 }
 
@@ -100,26 +193,41 @@ async function initPopup() {
         <span class="extension-version">v${extensionVersion}</span>
       </div>
     </div>
-    ${createFontSelect(settings.fontFamily)}
-    ${createControlRow('Font Size', settings.fontSize, 0, 100, 1, (v) => `${v}px`, (v) => {
-      settings.fontSize = v
-      saveSettings(settings)
-    })}
-    ${createControlRow('Font Weight', settings.fontWeight, 100, 900, 100, (v) => `${v}`, (v) => {
-      settings.fontWeight = v
-      saveSettings(settings)
-    })}
-    ${createControlRow('Line Height', settings.lineHeight, 1.0, 2.5, 0.1, (v) => v.toFixed(1), (v) => {
-      settings.lineHeight = v
-      saveSettings(settings)
-    })}
-    ${createControlRow('Letter Spacing', settings.letterSpacing, -2, 5, 0.5, (v) => `${v}px`, (v) => {
-      settings.letterSpacing = v
-      saveSettings(settings)
-    })}
+    <div class="layout">
+      <section class="layout-column features-column">
+        ${createFeatureToggleList(settings.features)}
+      </section>
+      <section class="layout-column typography-section" data-typography-section="true">
+        <h2 class="section-title">Typography</h2>
+        ${createFontSelect(settings.fontFamily)}
+        ${createControlRow('Font Size', settings.fontSize, 0, 100, 1, (v) => `${v}px`)}
+        ${createControlRow('Font Weight', settings.fontWeight, 100, 900, 100, (v) => `${v}`)}
+        ${createControlRow('Line Height', settings.lineHeight, 1.0, 2.5, 0.1, (v) => v.toFixed(1))}
+        ${createControlRow('Letter Spacing', settings.letterSpacing, -2, 5, 0.5, (v) => `${v}px`)}
+      </section>
+    </div>
   `
 
   document.querySelector('#app')!.innerHTML = html
+
+  setTypographyControlsEnabled(settings.features.typography)
+
+  // Feature toggle handlers
+  document.querySelectorAll('.feature-toggle-input').forEach((input) => {
+    input.addEventListener('change', async (e) => {
+      const target = e.target as HTMLInputElement
+      const feature = target.dataset.feature as FeatureKey | undefined
+      if (!feature) return
+
+      settings.features[feature] = target.checked
+      await saveSettings(settings)
+      notifyContentScript(settings)
+
+      if (feature === 'typography') {
+        setTypographyControlsEnabled(target.checked)
+      }
+    })
+  })
 
   // Font select handler
   const fontSelect = document.getElementById('font-select') as HTMLSelectElement
