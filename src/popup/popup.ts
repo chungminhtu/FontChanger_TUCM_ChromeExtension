@@ -151,7 +151,7 @@ async function initPopup() {
         ${settings.allowedDomains.map(domain => `
           <div class="allowed-domain-item">
             <span class="allowed-domain-name">${domain}</span>
-            <button type="button" class="remove-domain-btn" data-remove-domain="${domain}">×</button>
+            <button type="button" class="remove-domain-btn" data-remove-domain="${domain}" title="Remove">Remove</button>
           </div>
         `).join('')}
       </div>

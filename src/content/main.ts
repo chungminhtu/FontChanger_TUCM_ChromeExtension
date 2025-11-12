@@ -159,7 +159,11 @@ function clearTypography(): void {
 }
 
 function applyTypography(settings: FontSettings): void {
-  if (!document.head) return;
+  if (!document.head) {
+    console.warn('[FontChanger] document.head not available, retrying...')
+    setTimeout(() => applyTypography(settings), 100)
+    return
+  }
 
   clearTypography();
 
@@ -186,6 +190,11 @@ function applyTypography(settings: FontSettings): void {
       font-family: var(--fontchanger-font-family) !important;
       line-height: var(--fontchanger-line-height) !important;
       letter-spacing: var(--fontchanger-letter-spacing) !important;
+    }
+
+    body p, body span, body div, body li, body td, body th, body label, body a, body article, body section {
+      font-size: var(--fontchanger-font-size) !important;
+      font-weight: var(--fontchanger-font-weight) !important;
     }
 
     body input,
@@ -408,21 +417,34 @@ async function applyEnhancements(): Promise<void> {
   const isAllowedDomain = isDomainAllowed(currentHost, settings.allowedDomains)
   const isRedditDomain = /(^|\.)reddit\.com$/i.test(currentHost)
 
+  console.log('[FontChanger] applyEnhancements:', {
+    currentHost,
+    isAllowedDomain,
+    allowedDomains: settings.allowedDomains,
+    typographyEnabled: settings.features.typography,
+    fontFamily: settings.fontFamily,
+    fontSize: settings.fontSize
+  })
+
   if (!isAllowedDomain) {
+    console.log('[FontChanger] Domain not allowed, clearing typography')
     clearTypography()
     return
   }
 
   if (settings.features.typography) {
+    console.log('[FontChanger] Applying typography...')
     try {
       await loadAllFonts();
       await loadFont(settings.fontFamily);
       applyTypography(settings);
+      console.log('[FontChanger] Typography applied successfully')
     } catch (error) {
       console.error('[FontChanger] Failed to apply typography settings:', error);
       clearTypography();
     }
   } else {
+    console.log('[FontChanger] Typography feature disabled')
     clearTypography();
   }
 
