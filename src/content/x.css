@@ -1,62 +1,66 @@
 /* X (Twitter) full-width masonry reader — static CSS (bypasses X CSP).
-   Pairs with public/x-masonry.js (the clone-based masonry overlay).
+   Pairs with public/x-masonry.js (the clone-based masonry overlay). */
 
-   This file pins X's left nav to a slim 76px icon bar on the far left. By
-   default X right-aligns the nav inside a wide, centered column, wasting ~585px
-   on the left; pinning it lets the masonry overlay (which starts at 76px) use
-   the full window width. The overlay covers the old timeline, so any clipped
-   nav labels sit harmlessly underneath it. */
-
-/* Remove right sidebar */
+/* Remove right sidebar and the left nav entirely (max reading width). The
+   masonry overlay spans the full window (left:0). */
 [data-testid="sidebarColumn"] {
   display: none !important;
 }
-
-/* Slim, left-pinned icon nav */
 header[role="banner"] {
-  width: 76px !important;
-  min-width: 76px !important;
-  align-items: flex-start !important;
+  display: none !important;
 }
-header[role="banner"] > div {
-  width: 76px !important;
-  margin-left: 0 !important;
-  overflow: hidden !important;
-}
-
-/* Widen the underlying column too (fallback if the JS overlay is off) */
 main[role="main"] {
   overflow-x: hidden !important;
 }
-[data-testid="primaryColumn"] {
-  max-width: none !important;
-}
-
 html {
   overflow-x: hidden !important;
 }
 
-/* Masonry card styling (moved out of JS for performance — no per-element JS
-   style loop). Cloned cells get class .fc-card; their inline position/transform
-   is stripped in JS, layout comes from here. */
-#fc-grid {
-  column-gap: 14px;
+/* Masonry columns (explicit flex columns — performant; NOT CSS column-count). */
+#fc-grid .fc-col {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 #fc-grid .fc-card {
   position: static !important;
   transform: none !important;
   width: 100%;
-  display: inline-block;
-  vertical-align: top;
-  break-inside: avoid;
-  -webkit-column-break-inside: avoid;
-  margin: 0 0 14px 0;
+  min-width: 0;
+  box-sizing: border-box;
   border: 1px solid rgba(128, 128, 128, 0.25);
   border-radius: 14px;
   overflow: hidden;
-  box-sizing: border-box;
 }
 #fc-grid .fc-card * {
   min-width: 0 !important;
   max-width: 100% !important;
+}
+
+/* Compact cards — reclaim the empty left avatar gutter: float the avatar into
+   the top-left corner and let the tweet content use the full card width. */
+#fc-grid .fc-card article {
+  position: relative !important;
+}
+#fc-grid .fc-card [data-testid="Tweet-User-Avatar"] {
+  position: absolute !important;
+  top: 10px !important;
+  left: 10px !important;
+  width: 40px !important;
+  height: 40px !important;
+  min-width: 40px !important;
+  z-index: 1 !important;
+}
+/* collapse the now-empty avatar column and pad only the header to clear the avatar */
+#fc-grid .fc-card [data-testid="Tweet-User-Avatar"]:first-child,
+#fc-grid .fc-card div:has(> [data-testid="Tweet-User-Avatar"]) {
+  width: 0 !important;
+  min-width: 0 !important;
+  flex-basis: 0 !important;
+}
+#fc-grid .fc-card [data-testid="User-Name"] {
+  padding-left: 50px !important;
+  min-height: 40px !important;
 }
