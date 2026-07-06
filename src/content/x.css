@@ -1,18 +1,21 @@
 /* X (Twitter) full-width masonry reader — static CSS (bypasses X CSP).
-   Pairs with public/x-masonry.js (the clone-based masonry overlay). */
+   Pairs with public/x-masonry.js (the clone-based masonry overlay + typography).
 
-/* Remove right sidebar and the left nav entirely (max reading width). The
-   masonry overlay spans the full window (left:0). */
-[data-testid="sidebarColumn"] {
+   Home-only bits are gated behind html.fc-home (the masonry script toggles that
+   class while mounted on /home). On any other route the class is absent, so X's
+   native centered layout — including the left nav AND the right sidebar — is left
+   untouched, which keeps a single post centered instead of pinned to the left. */
+
+/* Home only: hide the right sidebar (the masonry overlay covers everything to the
+   right of the left nav). The left nav (header[role="banner"]) stays visible so
+   the grid is full-width MINUS the sidebar. */
+html.fc-home [data-testid="sidebarColumn"] {
   display: none !important;
 }
-header[role="banner"] {
-  display: none !important;
-}
-main[role="main"] {
+html.fc-home main[role="main"] {
   overflow-x: hidden !important;
 }
-html {
+html.fc-home {
   overflow-x: hidden !important;
 }
 
@@ -37,6 +40,17 @@ html {
 #fc-grid .fc-card * {
   min-width: 0 !important;
   max-width: 100% !important;
+}
+
+/* Read easily: never clamp/truncate tweet text — show every post in full. Kills
+   X's line-clamp so cloned cards (whose "Show more" React handler is dead) still
+   render the whole caption. The masonry script also rewrites any remaining
+   "Show more" link into a real anchor to the post. */
+#fc-grid .fc-card [data-testid="tweetText"],
+[data-testid="tweetText"] {
+  -webkit-line-clamp: unset !important;
+  max-height: none !important;
+  overflow: visible !important;
 }
 
 /* Compact cards — reclaim the empty left avatar gutter: float the avatar into
