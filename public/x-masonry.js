@@ -24,7 +24,7 @@
   'use strict';
   var ID = 'fc-masonry';
   var GAP = 10;
-  var MEDIA_GRACE = 2000; // ms to wait for a cell's media/cards to load before harvesting anyway
+  var MEDIA_GRACE = 3500; // ms to wait for a cell's media/cards to load before harvesting anyway
 
   function isHome() {
     var h = location.hostname.replace(/^www\./, '');
@@ -149,14 +149,18 @@
   }
 
   // ---- Thread reader (native, no reload) -----------------------------------
-  // Trigger X's own SPA router via a same-origin anchor click (no page reload).
+  // Trigger X's own SPA router WITHOUT a page reload. A synthetic anchor click is
+  // NOT intercepted by X's React Router (verified on live x.com — it falls through
+  // to a full navigation). pushState + a popstate event IS what X's history
+  // listener reacts to, so it renders the route in place. pushState alone does
+  // nothing (verified) — the popstate dispatch is the trigger.
   function spaNavigate(href) {
-    var a = document.createElement('a');
-    a.href = href;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-    a.remove();
+    try {
+      history.pushState({}, '', href);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    } catch (e) {
+      location.href = href; // last-resort fallback (full nav) if pushState is blocked
+    }
   }
   function ensureBackBtn() {
     if (backBtn) return;
