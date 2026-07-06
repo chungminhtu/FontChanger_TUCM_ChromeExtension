@@ -21,6 +21,17 @@ export default defineManifest({
     js: ['src/content/main.ts'],
     matches: ['https://*/*', 'http://*/*'],
     run_at: 'document_start',
+  }, {
+    // Static CSS (browser-injected, bypasses X's strict CSP which blocks the JS above).
+    css: ['src/content/x.css'],
+    matches: ['https://x.com/*', 'https://twitter.com/*'],
+    run_at: 'document_start',
+  }, {
+    // Plain classic JS from public/ (not bundled as a module) so it runs under
+    // X's strict CSP: clone-based masonry reader with infinite scroll.
+    js: ['public/x-masonry.js'],
+    matches: ['https://x.com/*', 'https://twitter.com/*'],
+    run_at: 'document_idle',
   }],
   permissions: [
     'storage',

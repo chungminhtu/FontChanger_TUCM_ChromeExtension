@@ -80,11 +80,56 @@ async function fetchFontCss(fontUrl: string, timeoutMs = REQUEST_TIMEOUT_MS): Pr
 }
 
 
+function isStorageAvailable(): boolean {
+  try {
+    return typeof chrome !== 'undefined' && 
+           typeof chrome.storage !== 'undefined' && 
+           typeof chrome.storage.local !== 'undefined';
+  } catch {
+    return false;
+  }
+}
+
+async function waitForStorage(maxRetries = 10, delayMs = 100): Promise<boolean> {
+  for (let i = 0; i < maxRetries; i++) {
+    if (isStorageAvailable()) {
+      return true;
+    }
+    await delay(delayMs);
+  }
+  return false;
+}
+
 async function getSettings(): Promise<FontSettings> {
+  // Wait for storage to be available
+  const storageReady = await waitForStorage();
+  if (!storageReady) {
+    console.warn('[FontChanger] chrome.storage.local not available after retries, using default settings');
+    return DEFAULT_SETTINGS;
+  }
+
   return new Promise((resolve) => {
-    chrome.storage.local.get(DEFAULT_SETTINGS, (result) => {
-      resolve(normalizeSettings(result as Partial<FontSettings>));
-    });
+    try {
+      if (!isStorageAvailable()) {
+        console.warn('[FontChanger] Storage became unavailable, using default settings');
+        resolve(DEFAULT_SETTINGS);
+        return;
+      }
+
+      chrome.storage.local.get(DEFAULT_SETTINGS, (result) => {
+        if (chrome.runtime.lastError) {
+          console.error('[FontChanger] Storage error:', chrome.runtime.lastError);
+          // Use default settings instead of rejecting
+          resolve(DEFAULT_SETTINGS);
+          return;
+        }
+        resolve(normalizeSettings(result as Partial<FontSettings>));
+      });
+    } catch (error) {
+      console.error('[FontChanger] Error accessing storage:', error);
+      // Use default settings instead of rejecting
+      resolve(DEFAULT_SETTINGS);
+    }
   });
 }
 
@@ -167,42 +212,13 @@ function applyTypography(settings: FontSettings): void {
 
   clearTypography();
 
+  // Only apply font-family, no other typography modifications
   const css = `
-    :root {
-      --fontchanger-font-family: '${settings.fontFamily}', sans-serif;
-      --fontchanger-font-size: ${settings.fontSize}px;
-      --fontchanger-font-weight: ${settings.fontWeight};
-      --fontchanger-line-height: ${settings.lineHeight};
-      --fontchanger-letter-spacing: ${settings.letterSpacing}px;
-    }
-
-    body {
-      font-family: var(--fontchanger-font-family) !important;
-      font-size: var(--fontchanger-font-size) !important;
-      font-weight: var(--fontchanger-font-weight) !important;
-      line-height: var(--fontchanger-line-height) !important;
-      letter-spacing: var(--fontchanger-letter-spacing) !important;
-    }
-
+    body,
     body *,
     body *::before,
     body *::after {
-      font-family: var(--fontchanger-font-family) !important;
-      line-height: var(--fontchanger-line-height) !important;
-      letter-spacing: var(--fontchanger-letter-spacing) !important;
-    }
-
-    body p, body span, body div, body li, body td, body th, body label, body a, body article, body section {
-      font-size: var(--fontchanger-font-size) !important;
-      font-weight: var(--fontchanger-font-weight) !important;
-    }
-
-    body input,
-    body textarea,
-    body select,
-    body button {
-      font-size: var(--fontchanger-font-size) !important;
-      font-weight: var(--fontchanger-font-weight) !important;
+      font-family: '${settings.fontFamily}', sans-serif !important;
     }
   `;
   
@@ -412,46 +428,51 @@ function injectRedditCSS(): void {
 }
 
 async function applyEnhancements(): Promise<void> {
-  const currentHost = window.location.hostname.toLowerCase()
-  const settings = await getSettings()
-  const isAllowedDomain = isDomainAllowed(currentHost, settings.allowedDomains)
-  const isRedditDomain = /(^|\.)reddit\.com$/i.test(currentHost)
+  try {
+    const currentHost = window.location.hostname.toLowerCase()
+    const settings = await getSettings()
+    const isAllowedDomain = isDomainAllowed(currentHost, settings.allowedDomains)
+    const isRedditDomain = /(^|\.)reddit\.com$/i.test(currentHost)
 
-  console.log('[FontChanger] applyEnhancements:', {
-    currentHost,
-    isAllowedDomain,
-    allowedDomains: settings.allowedDomains,
-    typographyEnabled: settings.features.typography,
-    fontFamily: settings.fontFamily,
-    fontSize: settings.fontSize
-  })
+    console.log('[FontChanger] applyEnhancements:', {
+      currentHost,
+      isAllowedDomain,
+      allowedDomains: settings.allowedDomains,
+      typographyEnabled: settings.features.typography,
+      fontFamily: settings.fontFamily,
+      fontSize: settings.fontSize
+    })
 
-  if (!isAllowedDomain) {
-    console.log('[FontChanger] Domain not allowed, clearing typography')
-    clearTypography()
-    return
-  }
+    if (!isAllowedDomain) {
+      console.log('[FontChanger] Domain not allowed, clearing typography')
+      clearTypography()
+      return
+    }
 
-  if (settings.features.typography) {
-    console.log('[FontChanger] Applying typography...')
-    try {
-      await loadAllFonts();
-      await loadFont(settings.fontFamily);
-      applyTypography(settings);
-      console.log('[FontChanger] Typography applied successfully')
-    } catch (error) {
-      console.error('[FontChanger] Failed to apply typography settings:', error);
+    if (settings.features.typography) {
+      console.log('[FontChanger] Applying typography...')
+      try {
+        await loadAllFonts();
+        await loadFont(settings.fontFamily);
+        applyTypography(settings);
+        console.log('[FontChanger] Typography applied successfully')
+      } catch (error) {
+        console.error('[FontChanger] Failed to apply typography settings:', error);
+        clearTypography();
+      }
+    } else {
+      console.log('[FontChanger] Typography feature disabled')
       clearTypography();
     }
-  } else {
-    console.log('[FontChanger] Typography feature disabled')
-    clearTypography();
-  }
 
-  if (isRedditDomain) {
-    runDomTasks(settings.features);
-    // Inject Reddit-specific CSS only on Reddit domains
-    injectRedditCSS();
+    if (isRedditDomain) {
+      runDomTasks(settings.features);
+      // Inject Reddit-specific CSS only on Reddit domains
+      injectRedditCSS();
+    }
+  } catch (error) {
+    console.error('[FontChanger] applyEnhancements failed:', error);
+    // Don't throw - just log the error and continue
   }
 }
 
@@ -497,20 +518,29 @@ function startObservers(): void {
 
 // Early check - only run on allowed domains
 ;(async () => {
-  const currentHost = window.location.hostname.toLowerCase()
-  const settings = await getSettings()
+  try {
+    const currentHost = window.location.hostname.toLowerCase()
+    const settings = await getSettings()
 
-  // If domain is not allowed, clear typography and stop
-  if (!isDomainAllowed(currentHost, settings.allowedDomains)) {
-    clearTypography()
-    return
+    // If domain is not allowed, clear typography and stop
+    if (!isDomainAllowed(currentHost, settings.allowedDomains)) {
+      clearTypography()
+      return
+    }
+
+    // Domain is allowed - start normal operation
+    onReady(() => {
+      queueEnhancements()
+      startObservers()
+    })
+  } catch (error) {
+    console.error('[FontChanger] Failed to initialize:', error);
+    // Continue anyway - storage might become available later
+    onReady(() => {
+      queueEnhancements()
+      startObservers()
+    })
   }
-
-  // Domain is allowed - start normal operation
-  onReady(() => {
-    queueEnhancements()
-    startObservers()
-  })
 })()
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

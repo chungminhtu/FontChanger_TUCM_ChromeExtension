@@ -15,24 +15,73 @@ const FEATURE_INFO: Array<{ key: FeatureKey; label: string; description?: string
 ]
 
 
+function isStorageAvailable(): boolean {
+  try {
+    return typeof chrome !== 'undefined' && 
+           typeof chrome.storage !== 'undefined' && 
+           typeof chrome.storage.local !== 'undefined';
+  } catch {
+    return false;
+  }
+}
+
 async function loadSettings(): Promise<FontSettings> {
   return new Promise((resolve) => {
-    chrome.storage.local.get(DEFAULT_SETTINGS, (result) => {
-      resolve(normalizeSettings(result as Partial<FontSettings>))
-    })
+    if (!isStorageAvailable()) {
+      console.warn('[FontChanger Popup] chrome.storage.local is not available, using default settings');
+      resolve(DEFAULT_SETTINGS);
+      return;
+    }
+    
+    try {
+      chrome.storage.local.get(DEFAULT_SETTINGS, (result) => {
+        if (chrome.runtime.lastError) {
+          console.error('[FontChanger Popup] Storage error:', chrome.runtime.lastError);
+          // Use default settings instead of rejecting
+          resolve(DEFAULT_SETTINGS);
+          return;
+        }
+        resolve(normalizeSettings(result as Partial<FontSettings>))
+      })
+    } catch (error) {
+      console.error('[FontChanger Popup] Error accessing storage:', error);
+      // Use default settings instead of rejecting
+      resolve(DEFAULT_SETTINGS);
+    }
   })
 }
 
 async function saveSettings(settings: FontSettings): Promise<void> {
   return new Promise((resolve) => {
-    chrome.storage.local.set(
-      {
-        ...settings,
-        features: { ...settings.features },
-        allowedDomains: sanitizeDomains(settings.allowedDomains),
-      },
-      () => resolve()
-    )
+    if (!isStorageAvailable()) {
+      console.warn('[FontChanger Popup] chrome.storage.local is not available, cannot save settings');
+      // Resolve anyway to prevent UI blocking
+      resolve();
+      return;
+    }
+    
+    try {
+      chrome.storage.local.set(
+        {
+          ...settings,
+          features: { ...settings.features },
+          allowedDomains: sanitizeDomains(settings.allowedDomains),
+        },
+        () => {
+          if (chrome.runtime.lastError) {
+            console.error('[FontChanger Popup] Storage error:', chrome.runtime.lastError);
+            // Resolve anyway to prevent UI blocking
+            resolve();
+            return;
+          }
+          resolve()
+        }
+      )
+    } catch (error) {
+      console.error('[FontChanger Popup] Error saving to storage:', error);
+      // Resolve anyway to prevent UI blocking
+      resolve();
+    }
   })
 }
 
@@ -127,7 +176,14 @@ function setTypographyControlsEnabled(enabled: boolean): void {
 }
 
 async function initPopup() {
-  const settings = await loadSettings()
+  let settings: FontSettings
+  try {
+    settings = await loadSettings()
+  } catch (error) {
+    console.error('[FontChanger Popup] Failed to load settings:', error);
+    // Use default settings if storage is unavailable
+    settings = DEFAULT_SETTINGS
+  }
   const manifest = chrome.runtime.getManifest()
   const extensionName = manifest.name || 'Font Changer'
   const extensionVersion = manifest.version || '1.0.0'
@@ -144,19 +200,25 @@ async function initPopup() {
       ? 'Typography applies automatically on this site.'
       : 'Add this site so typography loads here.'
 
+  const statusIcon = domainAllowed ? '✓' : currentHost ? '+' : '⚠'
+  const statusClass = domainAllowed ? 'status-allowed' : currentHost ? 'status-pending' : 'status-unavailable'
+
   const allowedDomainsHtml = settings.allowedDomains.length > 0 ? `
-    <div class="allowed-domains">
-      <h3 class="allowed-domains-title">Allowed Sites</h3>
+    <section class="allowed-domains-section">
+      <div class="section-header">
+        <h2 class="section-title">Allowed Sites</h2>
+        ${settings.allowedDomains.length > 1 ? '<button type="button" class="clear-domains-btn" data-action="clear-domains" title="Remove all sites">Clear all</button>' : ''}
+      </div>
       <div class="allowed-domains-list">
         ${settings.allowedDomains.map(domain => `
           <div class="allowed-domain-item">
-            <span class="allowed-domain-name">${domain}</span>
-            <button type="button" class="remove-domain-btn" data-remove-domain="${domain}" title="Remove">Remove</button>
+            <span class="domain-icon">✓</span>
+            <span class="allowed-domain-name" title="${domain}">${domain}</span>
+            <button type="button" class="remove-domain-btn" data-remove-domain="${domain}" title="Remove ${domain}">×</button>
           </div>
         `).join('')}
       </div>
-      ${settings.allowedDomains.length > 1 ? '<button type="button" class="clear-domains-btn" data-action="clear-domains">Remove all</button>' : ''}
-    </div>` : '';
+    </section>` : '';
 
   const html = `
     <div class="header">
@@ -164,35 +226,41 @@ async function initPopup() {
         <span class="extension-name">${extensionName}</span>
         <span class="extension-version">v${extensionVersion}</span>
       </div>
-      <div class="site-actions">
-        <div class="site-actions-meta">
-          <span class="site-actions-label">This site</span>
-          <span class="current-domain" title="${domainDisplay}">${domainDisplay}</span>
-          <span class="site-actions-hint">${allowStatusText}</span>
+    </div>
+    <div class="main-content">
+      <section class="site-control-section">
+        <div class="site-status ${statusClass}">
+          <div class="site-status-icon">${statusIcon}</div>
+          <div class="site-status-content">
+            <div class="site-status-label">Current Site</div>
+            <div class="current-domain" title="${domainDisplay}">${domainDisplay}</div>
+            <div class="site-status-hint">${allowStatusText}</div>
+          </div>
         </div>
         <button
           type="button"
           id="allow-domain-btn"
+          class="allow-site-btn"
           ${allowButtonDisabled ? 'disabled' : ''}
           ${currentHost ? `data-domain="${currentHost}"` : ''}
         >
           ${allowButtonLabel}
         </button>
-      </div>
+      </section>
       ${allowedDomainsHtml}
-    </div>
-    <div class="layout">
-      <section class="layout-column features-column">
-        ${createFeatureToggleList(settings.features)}
-      </section>
-      <section class="layout-column typography-section" data-typography-section="true">
-        <h2 class="section-title">Typography</h2>
-        ${createFontSelect(settings.fontFamily)}
-        ${createControlRow('Font Size', settings.fontSize, 0, 100, 1, (v) => `${v}px`)}
-        ${createControlRow('Font Weight', settings.fontWeight, 100, 900, 100, (v) => `${v}`)}
-        ${createControlRow('Line Height', settings.lineHeight, 1.0, 2.5, 0.1, (v) => v.toFixed(1))}
-        ${createControlRow('Letter Spacing', settings.letterSpacing, -2, 5, 0.5, (v) => `${v}px`)}
-      </section>
+      <div class="layout">
+        <section class="layout-column features-column">
+          ${createFeatureToggleList(settings.features)}
+        </section>
+        <section class="layout-column typography-section" data-typography-section="true">
+          <h2 class="section-title">Typography</h2>
+          ${createFontSelect(settings.fontFamily)}
+          ${createControlRow('Font Size', settings.fontSize, 0, 100, 1, (v) => `${v}px`)}
+          ${createControlRow('Font Weight', settings.fontWeight, 100, 900, 100, (v) => `${v}`)}
+          ${createControlRow('Line Height', settings.lineHeight, 1.0, 2.5, 0.1, (v) => v.toFixed(1))}
+          ${createControlRow('Letter Spacing', settings.letterSpacing, -2, 5, 0.5, (v) => `${v}px`)}
+        </section>
+      </div>
     </div>
   `
 
