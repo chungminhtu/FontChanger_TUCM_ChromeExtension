@@ -1,14 +1,15 @@
 /* X (Twitter) full-width masonry reader — static CSS (bypasses X CSP).
-   Pairs with public/x-masonry.js (the clone-based masonry overlay + typography).
+   Pairs with public/x-masonry.js (the masonry overlay + native thread reader).
 
-   Home-only bits are gated behind html.fc-home (the masonry script toggles that
-   class while mounted on /home). On any other route the class is absent, so X's
-   native centered layout — including the left nav AND the right sidebar — is left
-   untouched, which keeps a single post centered instead of pinned to the left. */
+   html.fc-home is toggled by the masonry script whenever the grid is mounted
+   (i.e. on /home, and it STAYS on while the thread reader is open). It hides the
+   left nav and BOTH sidebars for a full-width layout. On any other route with the
+   grid unmounted the class is absent, so X's native layout is left untouched. */
 
-/* Home only: hide the right sidebar (the masonry overlay covers everything to the
-   right of the left nav). The left nav (header[role="banner"]) stays visible so
-   the grid is full-width MINUS the sidebar. */
+/* Full width: hide the left nav AND both sidebars. This also applies to the
+   thread reader (the class stays on), so an opened post + its comments render
+   full-width with no sidebars. */
+html.fc-home header[role="banner"],
 html.fc-home [data-testid="sidebarColumn"] {
   display: none !important;
 }
@@ -17,6 +18,33 @@ html.fc-home main[role="main"] {
 }
 html.fc-home {
   overflow-x: hidden !important;
+}
+/* Reader: with the sidebars gone the native primary column would pin to the left,
+   so center it and give it a comfortable reading width. */
+html.fc-home [data-testid="primaryColumn"] {
+  width: 100% !important;
+  max-width: 800px !important;
+  margin: 0 auto !important;
+}
+
+/* Floating "Back to grid" button, shown only while the thread reader is open. */
+#fc-back {
+  display: none;
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 100000;
+  padding: 8px 14px;
+  font: 600 14px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: #fff;
+  background: #1d9bf0;
+  border: none;
+  border-radius: 9999px;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+}
+#fc-back:hover {
+  background: #1a8cd8;
 }
 
 /* Masonry columns (explicit flex columns — performant; NOT CSS column-count). */

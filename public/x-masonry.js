@@ -1,19 +1,25 @@
-// FontChanger — X (Twitter) clone-based masonry reader.
+// FontChanger — X (Twitter) clone-based masonry reader + native thread reader.
 // Plain classic content script (isolated world, no ES-module loader) so it runs
-// despite X's strict CSP. Harvests X's rendered tweets into our own masonry grid
-// (kept permanently) and drives X's virtualized timeline in the background to
-// load more as you scroll our grid.
+// despite X's strict CSP. Harvests X's rendered tweets into our own full-width
+// masonry grid (kept permanently) and drives X's virtualized timeline in the
+// background to load more as you scroll our grid.
 //
-// LAYOUT: the left nav (header[role="banner"]) stays visible; the masonry overlay
-// starts after it (offset = nav width, measured at runtime) so the grid is
-// full-width MINUS the left sidebar. Only mounts on /home; on any other route
-// (single post, profile) it unmounts and X's native centered layout shows.
+// LAYOUT: full width — the left nav AND both sidebars are hidden on /home (CSS,
+// gated by html.fc-home). Only mounts on /home.
+//
+// READER: clicking a card opens the full post + comments WITHOUT a page reload.
+// Rather than clone a dead, non-interactive copy, we hide the masonry overlay and
+// SPA-navigate X's own router (a synthetic same-origin anchor click — no reload)
+// to the thread. X renders it live and full-width (sidebars stay hidden), so
+// comments, translation, media and every control still work. A floating "Back"
+// button navigates home and restores the grid. The grid overlay is only hidden
+// (never torn down), so scroll position and harvested cards survive the round trip.
 //
 // PERF: masonry uses explicit flex columns (append each card to the shortest
-// column) — NOT CSS column-count, which reflows every card on each insert
-// (measured ~9x slower and O(n) per insert). Harvest is debounced; clones are
-// stripped of data-testid so they are never re-scanned; the bootstrap loader is
-// capped so it can't spin forever when the feed has nothing new.
+// column) — NOT CSS column-count. Harvest is debounced; clones are stripped of
+// data-testid so they are never re-scanned. We do NOT click X's inline "Show
+// more" (that reflowed every long tweet — a jank storm); truncated captions are
+// read in full in the thread reader instead. The bootstrap loader is capped.
 (function () {
   'use strict';
   var ID = 'fc-masonry';
@@ -25,15 +31,8 @@
     if (h !== 'x.com' && !/twitter\.com$/.test(h)) return false;
     return location.pathname === '/home' || location.pathname === '/';
   }
-  // Left-nav width so the overlay sits to the right of it (keeps the sidebar).
-  function navWidth() {
-    var hdr = document.querySelector('header[role="banner"]');
-    if (!hdr) return 0;
-    var w = Math.round(hdr.getBoundingClientRect().width);
-    return w > 0 && w < 400 ? w : 0; // guard against a full-width/mis-measured header
-  }
   function colCount() {
-    var w = window.innerWidth - navWidth();
+    var w = window.innerWidth; // full width — no sidebar offset
     if (w > 1600) return 4;
     if (w > 1200) return 3;
     if (w > 800) return 2;
@@ -47,6 +46,7 @@
   var curCols = 0;
   var overlay = null, grid = null, mo = null, loading = false, scheduled = false;
   var lastCount = 0, noProgress = 0;
+  var readerOpen = false, backBtn = null;
 
   function keyOf(article) {
     var links = article.querySelectorAll('a[href*="/status/"]');
@@ -56,9 +56,15 @@
     }
     return (article.innerText || '').slice(0, 80);
   }
-  // A cell is ready when every <img> has decoded AND every known media wrapper
-  // (photo / link card) has actually received its <img> — otherwise we'd clone
-  // an empty bordered box that never fills in.
+  function statusHrefOf(article) {
+    var links = article.querySelectorAll('a[href*="/status/"]');
+    for (var i = 0; i < links.length; i++) {
+      if (/\/status\/\d+$/.test(links[i].getAttribute('href'))) return links[i].href; // clean permalink
+    }
+    return links.length ? links[0].href : '';
+  }
+  // Ready when every <img> decoded AND every media wrapper (photo/link card) has
+  // its <img> — otherwise we'd clone an empty bordered box that never fills in.
   function mediaReady(cell) {
     var imgs = cell.querySelectorAll('img');
     for (var i = 0; i < imgs.length; i++) {
@@ -69,6 +75,14 @@
       if (!wraps[j].querySelector('img')) return false;
     }
     return true;
+  }
+  function eagerImgs(root) {
+    var imgs = root.querySelectorAll('img');
+    for (var c = 0; c < imgs.length; c++) {
+      imgs[c].loading = 'eager';
+      imgs[c].setAttribute('decoding', 'sync');
+      imgs[c].removeAttribute('fetchpriority');
+    }
   }
 
   function buildColumns(n) {
@@ -91,14 +105,8 @@
   }
   function place(el) { shortest().appendChild(el); }
 
-  // Keep the overlay pinned to the right of the (variable-width) left nav.
-  function positionOverlay() {
-    if (!overlay) return;
-    overlay.style.left = navWidth() + 'px';
-  }
   function layout() {
     if (!grid) return;
-    positionOverlay();
     var n = colCount();
     if (n !== curCols) {
       buildColumns(n);
@@ -120,31 +128,15 @@
       if (firstSeen[k] === undefined) firstSeen[k] = now;
       if (!mediaReady(cell) && now - firstSeen[k] < MEDIA_GRACE) continue; // let media/cards load
       seen.add(k);
-      var statusLink = art.querySelector('a[href*="/status/"]');
-      var statusHref = statusLink ? statusLink.href : '';
+
+      var statusHref = statusHrefOf(art);
       var clone = cell.cloneNode(true);
       clone.removeAttribute('data-testid');
       clone.removeAttribute('style');
       clone.className = 'fc-card';
-      // Clone lands in the visible overlay: force any lazy imgs to load now.
-      var cimgs = clone.querySelectorAll('img');
-      for (var c = 0; c < cimgs.length; c++) {
-        cimgs[c].loading = 'eager';
-        cimgs[c].setAttribute('decoding', 'sync');
-        cimgs[c].removeAttribute('fetchpriority');
-      }
-      // The clone's React handlers are dead, so X's "Show more" link does nothing.
-      // Turn it into a real anchor that opens the full post in a new tab.
-      var showMore = clone.querySelector('[data-testid="tweet-text-show-more-link"]');
-      if (showMore && statusHref) {
-        var a = document.createElement('a');
-        a.href = statusHref;
-        a.target = '_blank';
-        a.rel = 'noopener';
-        a.textContent = showMore.textContent || 'Show more';
-        a.style.cssText = 'color:#1d9bf0;text-decoration:none;';
-        showMore.replaceWith(a);
-      }
+      clone.setAttribute('data-fc-status', statusHref);
+      clone.setAttribute('data-fc-id', k);
+      eagerImgs(clone);
       cards.push(clone);
       place(clone);
     }
@@ -156,12 +148,55 @@
     requestAnimationFrame(function () { scheduled = false; harvest(); });
   }
 
+  // ---- Thread reader (native, no reload) -----------------------------------
+  // Trigger X's own SPA router via a same-origin anchor click (no page reload).
+  function spaNavigate(href) {
+    var a = document.createElement('a');
+    a.href = href;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    a.remove();
+  }
+  function ensureBackBtn() {
+    if (backBtn) return;
+    backBtn = document.createElement('button');
+    backBtn.id = 'fc-back';
+    backBtn.type = 'button';
+    backBtn.textContent = '← Back to grid';
+    backBtn.addEventListener('click', closeReader);
+    document.body.appendChild(backBtn);
+  }
+  function openReader(href) {
+    if (!href || readerOpen) return;
+    readerOpen = true;
+    if (overlay) overlay.style.display = 'none'; // reveal X's live thread underneath
+    ensureBackBtn();
+    backBtn.style.display = 'block';
+    spaNavigate(href);
+  }
+  function closeReader() {
+    if (!readerOpen) return;
+    readerOpen = false;
+    if (backBtn) backBtn.style.display = 'none';
+    if (!isHome()) spaNavigate(location.origin + '/home');
+    if (overlay) overlay.style.display = ''; // grid (with its cards + scroll) comes right back
+  }
+  function onCardClick(e) {
+    var card = e.target.closest ? e.target.closest('.fc-card') : null;
+    if (!card) return;
+    e.preventDefault();  // stop the dead clone's own link nav
+    e.stopPropagation();
+    openReader(card.getAttribute('data-fc-status'));
+  }
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && readerOpen) closeReader(); });
+
   function mount() {
     if (overlay) return;
-    document.documentElement.classList.add('fc-home'); // enables home-only CSS (hide right sidebar)
+    document.documentElement.classList.add('fc-home'); // full-width home CSS (hide nav + both sidebars)
     overlay = document.createElement('div');
     overlay.id = ID;
-    overlay.style.cssText = 'position:fixed;top:0;left:' + navWidth() + 'px;right:0;bottom:0;overflow-y:auto;' +
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;overflow-y:auto;' +
       'overflow-x:hidden;z-index:9999;background:' + (getComputedStyle(document.body).backgroundColor || '#fff') + ';padding:8px;';
     grid = document.createElement('div');
     grid.id = 'fc-grid';
@@ -170,9 +205,11 @@
     document.body.appendChild(overlay);
     buildColumns(colCount());
 
+    grid.addEventListener('click', onCardClick, true); // capture: beat X's link handlers → open reader
+
     overlay.addEventListener('scroll', function () {
       noProgress = 0; // user engaged → allow loading again
-      if (loading) return;
+      if (loading || readerOpen) return;
       if (overlay.scrollTop + overlay.clientHeight > overlay.scrollHeight - 1500) {
         loading = true;
         window.scrollBy(0, window.innerHeight * 3);
@@ -191,6 +228,8 @@
     document.documentElement.classList.remove('fc-home');
     if (mo) { mo.disconnect(); mo = null; }
     if (overlay) { overlay.remove(); overlay = null; grid = null; }
+    if (backBtn) { backBtn.style.display = 'none'; }
+    readerOpen = false;
     seen = new Set(); firstSeen = Object.create(null);
     cards = []; columnEls = []; curCols = 0; lastCount = 0; noProgress = 0;
   }
@@ -198,11 +237,10 @@
   // ---- Typography ----------------------------------------------------------
   // X's CSP blocks the crxjs module content script (src/content/main.ts), so the
   // popup's font settings never reach X through it. This classic content script
-  // is CSP-exempt (isolated world) and can read chrome.storage directly, so it
-  // owns typography on X: it injects a settings-driven <style> and re-applies on
-  // every change. Size/weight/line-height/letter-spacing are scoped to tweet text
-  // (applying them to every element would break X's icon sizing / layout);
-  // font-family is applied broadly.
+  // is CSP-exempt (isolated world) and reads chrome.storage directly, so it owns
+  // typography on X: injects a settings-driven <style>, re-applies on change.
+  // Size/weight/line-height/letter-spacing are scoped to tweet text (applying to
+  // every element breaks X's icon sizing); font-family is applied broadly.
   var TYPO_DEFAULTS = {
     fontFamily: 'Lexend Deca', fontSize: 16, fontWeight: 400,
     lineHeight: 1.5, letterSpacing: 0,
@@ -234,7 +272,6 @@
     if (!on) { style.textContent = ''; return; }
     loadFontLink(s.fontFamily);
     var fam = "'" + s.fontFamily + "', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
-    // Text targets: native tweet text AND our cloned cards (clones keep inner data-testid).
     var textSel = '[data-testid="tweetText"], [data-testid="tweetText"] *, ' +
       '#fc-grid .fc-card [data-testid="tweetText"], #fc-grid .fc-card [data-testid="tweetText"] *';
     style.textContent =
@@ -267,7 +304,12 @@
 
   window.addEventListener('resize', layout);
   setInterval(function () {
-    if (!isHome()) { unmount(); return; }
+    if (!isHome()) {
+      if (readerOpen) return; // reader drove the background page to a thread — keep the grid mounted (hidden)
+      unmount();
+      return;
+    }
+    if (readerOpen) return;  // reading a thread that lives at /home? never; guard anyway
     if (!document.querySelector('[data-testid="cellInnerDiv"]')) return;
     mount();
     layout();
