@@ -34,7 +34,7 @@ async function loadSettings(): Promise<FontSettings> {
     }
     
     try {
-      chrome.storage.local.get(DEFAULT_SETTINGS, (result) => {
+      chrome.storage.local.get(DEFAULT_SETTINGS as unknown as Record<string, unknown>, (result) => {
         if (chrome.runtime.lastError) {
           console.error('[FontChanger Popup] Storage error:', chrome.runtime.lastError);
           // Use default settings instead of rejecting
