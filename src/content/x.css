@@ -85,5 +85,48 @@ html.fc-home [data-testid="primaryColumn"] {
   overflow: visible !important;
 }
 
-/* Avatars render natively (the old compact hack collapsed the avatar's wrapper
-   to width:0, which blanked the profile image). Keep the header row intact. */
+/* Avatar: X clips it with clip-path: url(#shape-circle), an SVG clipPath that
+   does NOT resolve inside our cloned overlay → the avatar renders unclipped
+   (square). Force a real CSS circle instead, with an explicit 40x40 box so it
+   stays visible even though its column is collapsed below. */
+#fc-grid .fc-card [data-testid="Tweet-User-Avatar"],
+#fc-grid .fc-card [data-testid="Tweet-User-Avatar"] * {
+  clip-path: none !important;
+}
+#fc-grid .fc-card [data-testid="Tweet-User-Avatar"] {
+  position: absolute !important;
+  top: 12px !important;
+  left: 12px !important;
+  width: 40px !important;
+  height: 40px !important;
+  /* the avatar is absolutely positioned inside a collapsed (0-width) column, so
+     the generic `.fc-card * { max-width:100% }` would clamp it to 0 — opt out. */
+  max-width: none !important;
+  border-radius: 9999px !important;
+  overflow: hidden !important;
+  z-index: 2 !important;
+}
+#fc-grid .fc-card [data-testid="Tweet-User-Avatar"] *,
+#fc-grid .fc-card [data-testid="Tweet-User-Avatar"] img {
+  width: 40px !important;
+  height: 40px !important;
+  max-width: none !important;
+  border-radius: 9999px !important;
+}
+
+/* Content full width: collapse the empty avatar column (it reserved a vertical
+   strip beside the content for the whole card height) and float the avatar into
+   the top-left corner; pad the header so the name clears it. */
+#fc-grid .fc-card article {
+  position: relative !important;
+}
+#fc-grid .fc-card div:has(> [data-testid="Tweet-User-Avatar"]) {
+  width: 0 !important;
+  min-width: 0 !important;
+  flex-basis: 0 !important;
+  margin: 0 !important;
+}
+#fc-grid .fc-card [data-testid="User-Name"] {
+  padding-left: 52px !important;
+  min-height: 40px !important;
+}
