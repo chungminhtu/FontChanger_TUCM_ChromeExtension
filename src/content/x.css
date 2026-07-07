@@ -6,10 +6,9 @@
    left nav and BOTH sidebars for a full-width layout. On any other route with the
    grid unmounted the class is absent, so X's native layout is left untouched. */
 
-/* Full width: hide the left nav AND both sidebars. This also applies to the
-   thread reader (the class stays on), so an opened post + its comments render
-   full-width with no sidebars. */
-html.fc-home header[role="banner"],
+/* Keep X's LEFT nav (header[role="banner"]) visible so the user can navigate;
+   hide only the RIGHT sidebar (trends / who-to-follow). Applies to the grid and
+   to the thread reader (the class stays on while reading). */
 html.fc-home [data-testid="sidebarColumn"] {
   display: none !important;
 }
@@ -32,7 +31,7 @@ html.fc-home [data-testid="primaryColumn"] {
   display: none;
   position: fixed;
   top: 12px;
-  left: 12px;
+  right: 12px;
   z-index: 100000;
   padding: 8px 14px;
   font: 600 14px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;

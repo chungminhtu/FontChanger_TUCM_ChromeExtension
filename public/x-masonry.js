@@ -31,8 +31,19 @@
     if (h !== 'x.com' && !/twitter\.com$/.test(h)) return false;
     return location.pathname === '/home' || location.pathname === '/';
   }
+  // Keep X's left nav visible; the grid fills the width to the RIGHT of it. The
+  // right sidebar is hidden via CSS. Nav width is measured at runtime (it's
+  // responsive: a wide labelled rail or a narrow icon rail).
+  function navWidth() {
+    var hdr = document.querySelector('header[role="banner"]');
+    if (!hdr) return 0;
+    var w = Math.round(hdr.getBoundingClientRect().width);
+    // Accept the real nav width (X's left column, ~275–500px depending on the
+    // labelled vs icon rail); reject a mis-measured / full-width header.
+    return (w > 0 && w < window.innerWidth * 0.5) ? w : 0;
+  }
   function colCount() {
-    var w = window.innerWidth; // full width — no sidebar offset
+    var w = window.innerWidth - navWidth(); // full width MINUS the left nav
     if (w > 1600) return 4;
     if (w > 1200) return 3;
     if (w > 800) return 2;
@@ -84,6 +95,17 @@
       imgs[c].removeAttribute('fetchpriority');
     }
   }
+  // X lazy-assigns media <img> src only when the REAL cell intersects the
+  // viewport; a clone's IntersectionObserver never fires, so an unfilled photo /
+  // link-card leaves a blank bordered box forever. Drop any media wrapper that
+  // has no real (http) image — the card keeps its text and any loadable media
+  // (a wrapper whose img already has an http src still loads in the overlay).
+  function stripEmptyMedia(clone) {
+    var wraps = clone.querySelectorAll('[data-testid="tweetPhoto"], [data-testid="card.wrapper"]');
+    for (var i = 0; i < wraps.length; i++) {
+      if (!wraps[i].querySelector('img[src^="http"]')) wraps[i].remove();
+    }
+  }
 
   function buildColumns(n) {
     grid.textContent = '';
@@ -105,8 +127,12 @@
   }
   function place(el) { shortest().appendChild(el); }
 
+  function positionOverlay() {
+    if (overlay) overlay.style.left = navWidth() + 'px'; // sit to the right of the left nav
+  }
   function layout() {
     if (!grid) return;
+    positionOverlay();
     var n = colCount();
     if (n !== curCols) {
       buildColumns(n);
@@ -137,6 +163,7 @@
       clone.setAttribute('data-fc-status', statusHref);
       clone.setAttribute('data-fc-id', k);
       eagerImgs(clone);
+      stripEmptyMedia(clone);
       cards.push(clone);
       place(clone);
     }
@@ -197,10 +224,10 @@
 
   function mount() {
     if (overlay) return;
-    document.documentElement.classList.add('fc-home'); // full-width home CSS (hide nav + both sidebars)
+    document.documentElement.classList.add('fc-home'); // home CSS: keep left nav, hide right sidebar
     overlay = document.createElement('div');
     overlay.id = ID;
-    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;overflow-y:auto;' +
+    overlay.style.cssText = 'position:fixed;top:0;left:' + navWidth() + 'px;right:0;bottom:0;overflow-y:auto;' +
       'overflow-x:hidden;z-index:9999;background:' + (getComputedStyle(document.body).backgroundColor || '#fff') + ';padding:8px;';
     grid = document.createElement('div');
     grid.id = 'fc-grid';
