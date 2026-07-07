@@ -18,6 +18,11 @@ html.fc-home main[role="main"] {
 html.fc-home {
   overflow-x: hidden !important;
 }
+/* Pin X's centered nav rail (the fixed header>div>div) to the far-left edge so
+   there is no empty gutter to its left; the grid then offsets by the rail width. */
+html.fc-home header[role="banner"] > div > div {
+  left: 0 !important;
+}
 /* Reader: with the sidebars gone the native primary column would pin to the left,
    so center it and give it a comfortable reading width. */
 html.fc-home [data-testid="primaryColumn"] {
@@ -80,28 +85,5 @@ html.fc-home [data-testid="primaryColumn"] {
   overflow: visible !important;
 }
 
-/* Compact cards — reclaim the empty left avatar gutter: float the avatar into
-   the top-left corner and let the tweet content use the full card width. */
-#fc-grid .fc-card article {
-  position: relative !important;
-}
-#fc-grid .fc-card [data-testid="Tweet-User-Avatar"] {
-  position: absolute !important;
-  top: 10px !important;
-  left: 10px !important;
-  width: 40px !important;
-  height: 40px !important;
-  min-width: 40px !important;
-  z-index: 1 !important;
-}
-/* collapse the now-empty avatar column and pad only the header to clear the avatar */
-#fc-grid .fc-card [data-testid="Tweet-User-Avatar"]:first-child,
-#fc-grid .fc-card div:has(> [data-testid="Tweet-User-Avatar"]) {
-  width: 0 !important;
-  min-width: 0 !important;
-  flex-basis: 0 !important;
-}
-#fc-grid .fc-card [data-testid="User-Name"] {
-  padding-left: 50px !important;
-  min-height: 40px !important;
-}
+/* Avatars render natively (the old compact hack collapsed the avatar's wrapper
+   to width:0, which blanked the profile image). Keep the header row intact. */

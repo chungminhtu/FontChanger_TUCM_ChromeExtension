@@ -37,9 +37,11 @@
   function navWidth() {
     var hdr = document.querySelector('header[role="banner"]');
     if (!hdr) return 0;
-    var w = Math.round(hdr.getBoundingClientRect().width);
-    // Accept the real nav width (X's left column, ~275–500px depending on the
-    // labelled vs icon rail); reject a mis-measured / full-width header.
+    // The visible nav rail is the fixed inner column (header > div > div, ~275px);
+    // the header box itself is wider (X reserves centered gutter). CSS pins that
+    // rail to the left edge; we offset the grid by the rail's width, not the box.
+    var rail = hdr.querySelector(':scope > div > div') || hdr;
+    var w = Math.round(rail.getBoundingClientRect().width);
     return (w > 0 && w < window.innerWidth * 0.5) ? w : 0;
   }
   function colCount() {
@@ -52,6 +54,7 @@
 
   var seen = new Set();
   var firstSeen = Object.create(null);
+  var expandClicked = new WeakSet(); // live cells whose inline "Show more" we already clicked
   var cards = [];           // ordered card elements
   var columnEls = [];       // current column containers
   var curCols = 0;
@@ -152,7 +155,22 @@
       var k = keyOf(art);
       if (!k || seen.has(k)) continue;
       if (firstSeen[k] === undefined) firstSeen[k] = now;
-      if (!mediaReady(cell) && now - firstSeen[k] < MEDIA_GRACE) continue; // let media/cards load
+
+      // Auto-expand long posts: X's inline "Show more" is a <button role=button>
+      // (no href) that reveals the rest of the text IN PLACE with no navigation
+      // (verified on live x.com: click → path unchanged, text grew). Click it
+      // once per cell, then wait for the expansion before cloning so the card
+      // captures the full text and no dead "Show more" remains. Anchor-type
+      // show-more (has href → would navigate) is never clicked.
+      var sm = cell.querySelector('[data-testid="tweet-text-show-more-link"]');
+      var inlineExpand = sm && !(sm.tagName === 'A' && sm.getAttribute('href'));
+      if (inlineExpand && !expandClicked.has(cell)) {
+        expandClicked.add(cell);
+        try { sm.click(); } catch (e) { /* ignore */ }
+      }
+      var stillTruncated = inlineExpand && cell.querySelector('[data-testid="tweet-text-show-more-link"]');
+
+      if ((!mediaReady(cell) || stillTruncated) && now - firstSeen[k] < MEDIA_GRACE) continue; // let media/text settle
       seen.add(k);
 
       var statusHref = statusHrefOf(art);
@@ -261,7 +279,7 @@
     if (overlay) { overlay.remove(); overlay = null; grid = null; }
     if (backBtn) { backBtn.style.display = 'none'; }
     readerOpen = false;
-    seen = new Set(); firstSeen = Object.create(null);
+    seen = new Set(); firstSeen = Object.create(null); expandClicked = new WeakSet();
     cards = []; columnEls = []; curCols = 0; lastCount = 0; noProgress = 0;
   }
 
