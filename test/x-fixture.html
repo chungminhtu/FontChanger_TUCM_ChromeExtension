@@ -1,0 +1,115 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="/x.css">
+  <style>
+    body { margin: 0; background: #fff; color: #0f1419; font-family: sans-serif; }
+    header[role="banner"] { position: fixed; left: 0; top: 0; width: 250px; height: 100vh; border-right: 1px solid #eee; padding: 12px; box-sizing: border-box; }
+    main[role="main"] { display: flex; margin-left: 250px; }
+    [data-testid="primaryColumn"] { width: 600px; border-right: 1px solid #eee; }
+    [data-testid="sidebarColumn"] { width: 350px; padding: 12px; }
+    article { padding: 12px; border-bottom: 1px solid #eee; position: relative; }
+    [data-testid="Tweet-User-Avatar"] img { width: 40px; height: 40px; border-radius: 9999px; }
+    [data-testid="tweetPhoto"] img { width: 100%; border-radius: 12px; display: block; margin-top: 8px; }
+    [data-testid="User-Name"] { font-weight: 700; }
+    .actionbar { display: flex; gap: 24px; color: #536471; margin-top: 8px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header role="banner">
+    <div>🏠 Home</div><div>🔍 Explore</div><div>🔔 Notifications</div><div>✉️ Messages</div>
+  </header>
+  <main role="main">
+    <div data-testid="primaryColumn" id="pc"></div>
+    <div data-testid="sidebarColumn"><b>What's happening</b><div>Trend 1</div><div>Trend 2</div><div>Who to follow</div></div>
+  </main>
+
+  <script>
+    // ---- chrome.storage stub with real-ish settings (big text, to show typography) ----
+    var SETTINGS = { fontFamily: 'Poppins', fontSize: 20, fontWeight: 600, lineHeight: 1.7, letterSpacing: 0, features: { typography: true } };
+    window.chrome = {
+      runtime: { lastError: null },
+      storage: { local: { get: function (d, cb) { cb(SETTINGS); } }, onChanged: { addListener: function () {} } },
+    };
+
+    function img(color, label) {
+      var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="320">' +
+        '<rect width="600" height="320" fill="' + color + '"/>' +
+        '<text x="300" y="170" font-size="44" fill="#fff" text-anchor="middle" font-family="sans-serif">' + label + '</text></svg>';
+      return 'data:image/svg+xml,' + encodeURIComponent(svg);
+    }
+    function avatar(color) {
+      var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><circle cx="20" cy="20" r="20" fill="' + color + '"/></svg>';
+      return 'data:image/svg+xml,' + encodeURIComponent(svg);
+    }
+    function actionbar() {
+      return '<div class="actionbar"><span>💬 12</span><span>🔁 34</span><span>❤️ 567</span><span>📊 8.9K</span></div>';
+    }
+    function cell(id, name, handle, text, color, label) {
+      return '<div data-testid="cellInnerDiv"><article>' +
+        '<div data-testid="Tweet-User-Avatar"><img src="' + avatar(color) + '"></div>' +
+        '<div data-testid="User-Name">' + name + ' <span>@' + handle + ' · 3h</span></div>' +
+        '<time datetime="2026-07-06"></time>' +
+        '<a href="/' + handle + '/status/' + id + '">permalink</a>' +
+        '<div data-testid="tweetText">' + text + '</div>' +
+        '<div data-testid="tweetPhoto"><img src="' + img(color, label) + '"></div>' +
+        actionbar() + '</article></div>';
+    }
+
+    var LONG = 'On-device inference shipped across every product line this quarter. Median end-to-end latency fell by forty percent versus the cloud baseline, and no user data left the device at any point in the pipeline. Adoption in the mobile app reached 61% of monthly active users within three weeks of release.';
+    var HOME =
+      cell(1001, '9GAG', '9GAG', 'Best interview after the match you will EVER see 😄', '#e63946', 'PHOTO 1') +
+      cell(1002, 'kache', 'yacineMTB', LONG, '#457b9d', 'PHOTO 2') +
+      cell(1003, 'Aniket Pawar', 'alaymanguy', 'Someone built the ultimate directory of OSS perks every maintainer should bookmark. 50+ programs, free credits, dev tools.', '#2a9d8f', 'PHOTO 3') +
+      cell(1004, 'Naman', 'naman34', 'A few component libraries built around stylexjs exist now. It only makes sense they all appeared recently.', '#e9c46a', 'PHOTO 4') +
+      cell(1005, 'Jiahan Chen', 'jiahan_c', 'Make your Node.js CLI start faster: enable the compile cache on startup. 130ms -> 80ms.', '#f4a261', 'PHOTO 5') +
+      cell(1006, 'Tom Dörr', 'tom_doerr', 'Visuals-first Android launcher for emulation handhelds.', '#8338ec', 'PHOTO 6');
+
+    function thread(id) {
+      var post = '<div data-testid="cellInnerDiv"><article>' +
+        '<div data-testid="Tweet-User-Avatar"><img src="' + avatar('#457b9d') + '"></div>' +
+        '<div data-testid="User-Name">kache <span>@yacineMTB · 5h</span></div>' +
+        '<time datetime="2026-07-06"></time>' +
+        '<a href="/yacineMTB/status/' + id + '">permalink</a>' +
+        '<div data-testid="tweetText">' + LONG + ' ' + LONG + '</div>' +
+        '<div data-testid="tweetPhoto"><img src="' + img('#457b9d', 'FULL POST') + '"></div>' +
+        actionbar() + '</article></div>';
+      var replies = [
+        ['Ada L', 'ada_dev', 'This is huge — the latency numbers alone justify the migration. Great write-up.'],
+        ['Rob Pike-ish', 'gopherfan', 'Curious how this behaves on lower-end devices. Any p95 numbers?'],
+        ['María', 'maria_ml', 'Ported it last week, the Core AI path was painless. Recommend.'],
+      ].map(function (r, i) {
+        return '<div data-testid="cellInnerDiv"><article>' +
+          '<div data-testid="Tweet-User-Avatar"><img src="' + avatar('#999') + '"></div>' +
+          '<div data-testid="User-Name">' + r[0] + ' <span>@' + r[1] + ' · ' + (i + 1) + 'h</span></div>' +
+          '<time datetime="2026-07-06"></time>' +
+          '<a href="/' + r[1] + '/status/' + (2000 + i) + '">permalink</a>' +
+          '<div data-testid="tweetText">' + r[2] + '</div>' + actionbar() + '</article></div>';
+      }).join('');
+      return '<h2 style="padding:12px;margin:0;">Post</h2>' + post +
+        '<h3 style="padding:12px;margin:0;border-top:1px solid #eee;">Comments</h3>' + replies;
+    }
+    window.__home = HOME;
+    document.getElementById('pc').innerHTML = HOME;
+
+    // ---- Mock X SPA router: anchor clicks to /status/ID swap in the thread (no reload) ----
+    document.addEventListener('click', function (e) {
+      var a = e.target.closest && e.target.closest('a[href]');
+      if (!a) return;
+      var href = a.getAttribute('href') || '';
+      var m = href.match(/\/status\/(\d+)/);
+      if (m) {
+        e.preventDefault();
+        history.pushState({}, '', '/yacineMTB/status/' + m[1]);
+        document.getElementById('pc').innerHTML = thread(m[1]);
+      } else if (href.indexOf('/home') >= 0) {
+        e.preventDefault();
+        history.pushState({}, '', '/home');
+        document.getElementById('pc').innerHTML = window.__home;
+      }
+    }, false);
+  </script>
+  <script src="/x-masonry.test.js"></script>
+</body>
+</html>
