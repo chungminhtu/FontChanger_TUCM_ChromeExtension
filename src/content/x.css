@@ -60,7 +60,7 @@ html.fc-home [data-testid="primaryColumn"] {
   gap: 10px;
 }
 #fc-grid .fc-card {
-  position: static !important;
+  position: relative !important;
   transform: none !important;
   width: 100%;
   min-width: 0;
@@ -68,6 +68,22 @@ html.fc-home [data-testid="primaryColumn"] {
   border: 1px solid rgba(128, 128, 128, 0.25);
   border-radius: 14px;
   overflow: hidden;
+  /* Cap very tall posts so one long article can't dominate a column; the rest is
+     read in the thread reader (click the card). */
+  max-height: 600px;
+  cursor: pointer;
+}
+/* Fade the bottom of a clipped card to signal there's more (class toggled by JS
+   only on cards whose content actually overflows the cap). */
+#fc-grid .fc-card.fc-clipped::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 80px;
+  background: linear-gradient(to bottom, transparent, var(--fc-bg, #fff));
+  pointer-events: none;
 }
 #fc-grid .fc-card * {
   min-width: 0 !important;

@@ -187,10 +187,21 @@
     }
   }
 
+  // Toggle .fc-clipped on cards whose content overflows the CSS max-height cap
+  // (so the bottom fade only shows where there's actually more to read). Re-run
+  // as images finish loading and grow the cards.
+  function markClipped() {
+    for (var i = 0; i < cards.length; i++) {
+      var c = cards[i];
+      if (c.scrollHeight > c.clientHeight + 4) c.classList.add('fc-clipped');
+      else c.classList.remove('fc-clipped');
+    }
+  }
+
   function schedule() {
     if (scheduled) return;
     scheduled = true;
-    requestAnimationFrame(function () { scheduled = false; harvest(); });
+    requestAnimationFrame(function () { scheduled = false; harvest(); markClipped(); });
   }
 
   // ---- Thread reader (native, no reload) -----------------------------------
@@ -245,8 +256,10 @@
     document.documentElement.classList.add('fc-home'); // home CSS: keep left nav, hide right sidebar
     overlay = document.createElement('div');
     overlay.id = ID;
+    var bg = getComputedStyle(document.body).backgroundColor || '#fff';
     overlay.style.cssText = 'position:fixed;top:0;left:' + navWidth() + 'px;right:0;bottom:0;overflow-y:auto;' +
-      'overflow-x:hidden;z-index:9999;background:' + (getComputedStyle(document.body).backgroundColor || '#fff') + ';padding:8px;';
+      'overflow-x:hidden;z-index:9999;background:' + bg + ';padding:8px;';
+    overlay.style.setProperty('--fc-bg', bg); // the clipped-card fade fades to the real bg
     grid = document.createElement('div');
     grid.id = 'fc-grid';
     grid.style.cssText = 'display:flex;gap:' + GAP + 'px;align-items:flex-start;';
