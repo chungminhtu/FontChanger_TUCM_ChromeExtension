@@ -80,6 +80,10 @@
   // Ready when every <img> decoded AND every media wrapper (photo/link card) has
   // its <img> — otherwise we'd clone an empty bordered box that never fills in.
   function mediaReady(cell) {
+    // Avatar first — x.com is fully lazy, and a blank avatar is the most visible
+    // miss. Don't harvest until the profile image has decoded.
+    var avi = cell.querySelector('[data-testid="Tweet-User-Avatar"] img');
+    if (avi && (!avi.complete || avi.naturalWidth === 0)) return false;
     var imgs = cell.querySelectorAll('img');
     for (var i = 0; i < imgs.length; i++) {
       if (!imgs[i].complete || imgs[i].naturalWidth === 0) return false;
@@ -107,6 +111,23 @@
     var wraps = clone.querySelectorAll('[data-testid="tweetPhoto"], [data-testid="card.wrapper"]');
     for (var i = 0; i < wraps.length; i++) {
       if (!wraps[i].querySelector('img[src^="http"]')) wraps[i].remove();
+    }
+  }
+  // Tag the tweet's flex row + its avatar/content columns so CSS can float the
+  // avatar (content then wraps beside it and reclaims full width below), instead
+  // of X's fixed avatar column reserving an empty strip / our old overlap.
+  function tagAvatarLayout(clone) {
+    var av = clone.querySelector('[data-testid="Tweet-User-Avatar"]');
+    if (!av) return;
+    var col = av;
+    while (col.parentElement && col.parentElement !== clone && col.parentElement.children.length < 2) {
+      col = col.parentElement;
+    }
+    var row = col.parentElement;
+    if (row && row !== clone && row.children.length >= 2) {
+      row.classList.add('fc-row');
+      col.classList.add('fc-avcol');
+      if (col.nextElementSibling) col.nextElementSibling.classList.add('fc-content');
     }
   }
 
@@ -182,6 +203,7 @@
       clone.setAttribute('data-fc-id', k);
       eagerImgs(clone);
       stripEmptyMedia(clone);
+      tagAvatarLayout(clone);
       cards.push(clone);
       place(clone);
     }
@@ -193,8 +215,17 @@
   function markClipped() {
     for (var i = 0; i < cards.length; i++) {
       var c = cards[i];
-      if (c.scrollHeight > c.clientHeight + 4) c.classList.add('fc-clipped');
-      else c.classList.remove('fc-clipped');
+      var clipped = c.scrollHeight > c.clientHeight + 4;
+      c.classList.toggle('fc-clipped', clipped);
+      var more = c.querySelector('.fc-more');
+      if (clipped && !more) {
+        more = document.createElement('div');
+        more.className = 'fc-more';
+        more.textContent = 'Show more →';
+        c.appendChild(more);
+      } else if (!clipped && more) {
+        more.remove();
+      }
     }
   }
 
@@ -274,8 +305,10 @@
       if (loading || readerOpen) return;
       if (overlay.scrollTop + overlay.clientHeight > overlay.scrollHeight - 1500) {
         loading = true;
-        window.scrollBy(0, window.innerHeight * 3);
-        setTimeout(function () { schedule(); loading = false; }, 600);
+        // Gentle step + dwell: x.com only loads a cell's media/avatar once it sits
+        // in the viewport, so scrolling too far too fast leaves blanks.
+        window.scrollBy(0, window.innerHeight * 1.5);
+        setTimeout(function () { schedule(); loading = false; }, 900);
       }
     }, { passive: true });
 
@@ -381,8 +414,8 @@
     if (cards.length === lastCount) noProgress++; else { noProgress = 0; lastCount = cards.length; }
     if (!loading && noProgress < 4 && overlay && overlay.scrollHeight <= overlay.clientHeight + 400) {
       loading = true;
-      window.scrollBy(0, window.innerHeight * 2);
-      setTimeout(function () { schedule(); loading = false; }, 600);
+      window.scrollBy(0, window.innerHeight * 1.2);
+      setTimeout(function () { schedule(); loading = false; }, 900);
     }
   }, 1200);
 })();

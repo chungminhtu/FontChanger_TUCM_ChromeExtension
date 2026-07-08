@@ -103,46 +103,52 @@ html.fc-home [data-testid="primaryColumn"] {
 
 /* Avatar: X clips it with clip-path: url(#shape-circle), an SVG clipPath that
    does NOT resolve inside our cloned overlay → the avatar renders unclipped
-   (square). Force a real CSS circle instead, with an explicit 40x40 box so it
-   stays visible even though its column is collapsed below. */
+   (square). Force a real CSS circle with an explicit 40x40 box (opt out of the
+   generic `.fc-card * { max-width:100% }`, which would otherwise shrink it). */
 #fc-grid .fc-card [data-testid="Tweet-User-Avatar"],
 #fc-grid .fc-card [data-testid="Tweet-User-Avatar"] * {
   clip-path: none !important;
 }
-#fc-grid .fc-card [data-testid="Tweet-User-Avatar"] {
-  position: absolute !important;
-  top: 12px !important;
-  left: 12px !important;
-  width: 40px !important;
-  height: 40px !important;
-  /* the avatar is absolutely positioned inside a collapsed (0-width) column, so
-     the generic `.fc-card * { max-width:100% }` would clamp it to 0 — opt out. */
-  max-width: none !important;
-  border-radius: 9999px !important;
-  overflow: hidden !important;
-  z-index: 2 !important;
-}
-#fc-grid .fc-card [data-testid="Tweet-User-Avatar"] *,
+#fc-grid .fc-card [data-testid="Tweet-User-Avatar"],
+#fc-grid .fc-card [data-testid="Tweet-User-Avatar"] > div,
 #fc-grid .fc-card [data-testid="Tweet-User-Avatar"] img {
   width: 40px !important;
   height: 40px !important;
   max-width: none !important;
   border-radius: 9999px !important;
+  overflow: hidden !important;
 }
 
-/* Content full width: collapse the empty avatar column (it reserved a vertical
-   strip beside the content for the whole card height) and float the avatar into
-   the top-left corner; pad the header so the name clears it. */
-#fc-grid .fc-card article {
-  position: relative !important;
+/* Content full width WITHOUT overlap: float the avatar column left so the header
+   sits beside it and the text/media wrap under it at full width (instead of X's
+   fixed avatar column reserving an empty vertical strip). Classes are tagged on
+   the row / avatar-column / content-column by the masonry script. */
+#fc-grid .fc-card .fc-row {
+  display: block !important;
 }
-#fc-grid .fc-card div:has(> [data-testid="Tweet-User-Avatar"]) {
-  width: 0 !important;
-  min-width: 0 !important;
-  flex-basis: 0 !important;
-  margin: 0 !important;
+#fc-grid .fc-card .fc-avcol {
+  float: left !important;
+  width: 40px !important;
+  min-width: 40px !important;
+  max-width: 40px !important;
+  margin-right: 12px !important;
 }
-#fc-grid .fc-card [data-testid="User-Name"] {
-  padding-left: 52px !important;
-  min-height: 40px !important;
+#fc-grid .fc-card .fc-content {
+  display: block !important;
+  width: auto !important;
+  overflow: visible !important;
+}
+
+/* "Show more" affordance on a clipped card (the whole card is clickable → opens
+   the thread reader with the full, scrollable post). */
+#fc-grid .fc-card .fc-more {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 8px;
+  text-align: center;
+  font: 600 13px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: #1d9bf0;
+  pointer-events: none;
+  z-index: 1;
 }
