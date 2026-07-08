@@ -69,21 +69,25 @@ html.fc-home [data-testid="primaryColumn"] {
   border-radius: 14px;
   overflow: hidden;
   /* Cap very tall posts so one long article can't dominate a column; the rest is
-     read in the thread reader (click the card). */
+     read by scrolling inside the card (see .fc-clipped below). */
   max-height: 600px;
   cursor: pointer;
 }
-/* Fade the bottom of a clipped card to signal there's more (class toggled by JS
-   only on cards whose content actually overflows the cap). */
-#fc-grid .fc-card.fc-clipped::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 80px;
-  background: linear-gradient(to bottom, transparent, var(--fc-bg, #fff));
-  pointer-events: none;
+/* Long posts (taller than the cap) scroll inline instead of showing "Show more".
+   The 8px scrollbar gutter is always reserved (no layout shift) but the thumb is
+   transparent until you hover the card — "hover to get a scrollbar". */
+#fc-grid .fc-card.fc-clipped {
+  overflow-y: auto;
+}
+#fc-grid .fc-card.fc-clipped::-webkit-scrollbar {
+  width: 8px;
+}
+#fc-grid .fc-card.fc-clipped::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 4px;
+}
+#fc-grid .fc-card.fc-clipped:hover::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.55);
 }
 #fc-grid .fc-card * {
   min-width: 0 !important;
@@ -137,18 +141,4 @@ html.fc-home [data-testid="primaryColumn"] {
   display: block !important;
   width: auto !important;
   overflow: visible !important;
-}
-
-/* "Show more" affordance on a clipped card (the whole card is clickable → opens
-   the thread reader with the full, scrollable post). */
-#fc-grid .fc-card .fc-more {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 8px;
-  text-align: center;
-  font: 600 13px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  color: #1d9bf0;
-  pointer-events: none;
-  z-index: 1;
 }

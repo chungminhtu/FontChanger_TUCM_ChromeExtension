@@ -120,16 +120,29 @@
   function tagAvatarLayout(clone) {
     var av = clone.querySelector('[data-testid="Tweet-User-Avatar"]');
     if (!av) return;
+    // Anchor on the tweet body (or name) so we tag the RIGHT columns regardless of
+    // DOM variation. The avatar column = highest ancestor of the avatar that does
+    // NOT contain the body; its parent is the flex row; the content column is the
+    // row child that DOES contain the body. (The old child-count walk mis-tagged a
+    // thread-connector line as the content column → body sat beside the float in a
+    // tall empty strip instead of wrapping under the avatar.)
+    var body = clone.querySelector('[data-testid="tweetText"]') ||
+               clone.querySelector('[data-testid="User-Name"]');
+    if (!body) return;
     var col = av;
-    while (col.parentElement && col.parentElement !== clone && col.parentElement.children.length < 2) {
+    while (col.parentElement && col.parentElement !== clone && !col.parentElement.contains(body)) {
       col = col.parentElement;
     }
     var row = col.parentElement;
-    if (row && row !== clone && row.children.length >= 2) {
-      row.classList.add('fc-row');
-      col.classList.add('fc-avcol');
-      if (col.nextElementSibling) col.nextElementSibling.classList.add('fc-content');
+    if (!row || row === clone) return;
+    var content = null;
+    for (var i = 0; i < row.children.length; i++) {
+      if (row.children[i] !== col && row.children[i].contains(body)) { content = row.children[i]; break; }
     }
+    if (!content) return;
+    row.classList.add('fc-row');
+    col.classList.add('fc-avcol');
+    content.classList.add('fc-content');
   }
 
   function buildColumns(n) {
@@ -219,23 +232,13 @@
     }
   }
 
-  // Toggle .fc-clipped on cards whose content overflows the CSS max-height cap
-  // (so the bottom fade only shows where there's actually more to read). Re-run
-  // as images finish loading and grow the cards.
+  // Toggle .fc-clipped on cards whose content overflows the CSS max-height cap.
+  // Clipped cards become inline-scrollable (CSS shows the scrollbar on hover) so
+  // long posts are read in place — no "Show more". Re-run as images load & grow.
   function markClipped() {
     for (var i = 0; i < cards.length; i++) {
       var c = cards[i];
-      var clipped = c.scrollHeight > c.clientHeight + 4;
-      c.classList.toggle('fc-clipped', clipped);
-      var more = c.querySelector('.fc-more');
-      if (clipped && !more) {
-        more = document.createElement('div');
-        more.className = 'fc-more';
-        more.textContent = 'Show more →';
-        c.appendChild(more);
-      } else if (!clipped && more) {
-        more.remove();
-      }
+      c.classList.toggle('fc-clipped', c.scrollHeight > c.clientHeight + 4);
     }
   }
 
