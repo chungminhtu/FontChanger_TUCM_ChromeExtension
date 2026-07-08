@@ -55,6 +55,7 @@
   var seen = new Set();
   var firstSeen = Object.create(null);
   var expandClicked = new WeakSet(); // live cells whose inline "Show more" we already clicked
+  var incomplete = Object.create(null); // status-key -> clone harvested before its media had loaded
   var cards = [];           // ordered card elements
   var columnEls = [];       // current column containers
   var curCols = 0;
@@ -174,7 +175,14 @@
       if (!art) continue;
       if (!art.querySelector('time')) continue; // skip promoted/ads (no timestamp)
       var k = keyOf(art);
-      if (!k || seen.has(k)) continue;
+      if (!k) continue;
+      if (seen.has(k)) {
+        // Re-fill pass: this cell was already harvested. If its clone went in
+        // before X had lazy-loaded the media and the live cell is now fully
+        // loaded, replace the clone with a complete fresh copy.
+        if (incomplete[k] && mediaReady(cell)) refill(k, cell);
+        continue;
+      }
       if (firstSeen[k] === undefined) firstSeen[k] = now;
 
       // Auto-expand long posts: X's inline "Show more" is a <button role=button>
@@ -191,7 +199,8 @@
       }
       var stillTruncated = inlineExpand && cell.querySelector('[data-testid="tweet-text-show-more-link"]');
 
-      if ((!mediaReady(cell) || stillTruncated) && now - firstSeen[k] < MEDIA_GRACE) continue; // let media/text settle
+      var ready = !stillTruncated && mediaReady(cell);
+      if (!ready && now - firstSeen[k] < MEDIA_GRACE) continue; // let media/text settle
       seen.add(k);
 
       var statusHref = statusHrefOf(art);
@@ -204,6 +213,7 @@
       eagerImgs(clone);
       stripEmptyMedia(clone);
       tagAvatarLayout(clone);
+      if (!ready) incomplete[k] = clone; // grace expired with media still missing → re-fill later
       cards.push(clone);
       place(clone);
     }
@@ -227,6 +237,28 @@
         more.remove();
       }
     }
+  }
+
+  // Replace an incomplete clone (harvested before its media loaded) with a fresh
+  // full clone of the now-loaded live cell, in the same grid position.
+  function refill(k, cell) {
+    var old = incomplete[k];
+    if (!old || !old.parentNode) { delete incomplete[k]; return; }
+    var art = cell.querySelector('article');
+    var fresh = cell.cloneNode(true);
+    fresh.removeAttribute('data-testid');
+    fresh.removeAttribute('style');
+    fresh.className = 'fc-card';
+    fresh.setAttribute('data-fc-status', art ? statusHrefOf(art) : (old.getAttribute('data-fc-status') || ''));
+    fresh.setAttribute('data-fc-id', k);
+    eagerImgs(fresh);
+    stripEmptyMedia(fresh);
+    tagAvatarLayout(fresh);
+    old.parentNode.replaceChild(fresh, old);
+    var idx = cards.indexOf(old);
+    if (idx >= 0) cards[idx] = fresh;
+    delete incomplete[k];
+    markClipped();
   }
 
   function schedule() {
@@ -326,6 +358,7 @@
     if (backBtn) { backBtn.style.display = 'none'; }
     readerOpen = false;
     seen = new Set(); firstSeen = Object.create(null); expandClicked = new WeakSet();
+    incomplete = Object.create(null);
     cards = []; columnEls = []; curCols = 0; lastCount = 0; noProgress = 0;
   }
 
