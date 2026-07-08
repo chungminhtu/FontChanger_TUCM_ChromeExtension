@@ -20,6 +20,9 @@ export default defineManifest({
   content_scripts: [{
     js: ['src/content/main.ts'],
     matches: ['https://*/*', 'http://*/*'],
+    // X/Twitter typography is owned by public/x-masonry.js (+ x.css); main.ts is
+    // CSP-blocked there and its storage read only logged a benign warning. Skip it.
+    exclude_matches: ['https://x.com/*', 'https://twitter.com/*'],
     run_at: 'document_start',
   }, {
     // Static CSS (browser-injected, bypasses X's strict CSP which blocks the JS above).
