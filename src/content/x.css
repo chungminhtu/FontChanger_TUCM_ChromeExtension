@@ -114,7 +114,7 @@ html.fc-home [data-testid="primaryColumn"] {
   clip-path: none !important;
 }
 #fc-grid .fc-card [data-testid="Tweet-User-Avatar"],
-#fc-grid .fc-card [data-testid="Tweet-User-Avatar"] > div,
+#fc-grid .fc-card [data-testid="Tweet-User-Avatar"] div,
 #fc-grid .fc-card [data-testid="Tweet-User-Avatar"] img {
   width: 40px !important;
   height: 40px !important;
@@ -135,6 +135,11 @@ html.fc-home [data-testid="primaryColumn"] {
   width: 40px !important;
   min-width: 40px !important;
   max-width: 40px !important;
+  /* Cap the float to the avatar itself: X leaves a tall thread-connector /
+     spacer inside this column, which kept the float full-height and reserved
+     an empty strip beside the whole tweet. */
+  height: 40px !important;
+  overflow: hidden !important;
   margin-right: 12px !important;
 }
 #fc-grid .fc-card .fc-content {
