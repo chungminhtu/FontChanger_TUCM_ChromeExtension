@@ -114,9 +114,13 @@
       if (!wraps[i].querySelector('img[src^="http"]')) wraps[i].remove();
     }
   }
-  // Tag the tweet's flex row + its avatar/content columns so CSS can float the
-  // avatar (content then wraps beside it and reclaims full width below), instead
-  // of X's fixed avatar column reserving an empty strip / our old overlap.
+  // Tag the tweet's flex row + its avatar/content columns so CSS can overlay the
+  // avatar in the row's top-left corner and indent ONLY the header line beside it.
+  // Floating the avatar column does NOT work here: X's tweet-text wrapper is a
+  // flex container (a BFC root), so instead of its line boxes wrapping around the
+  // float, the whole box gets pushed 52px right for its full height — the empty
+  // strip the user keeps seeing. Absolute avatar + header margin has no such
+  // interaction, so text/media get the card's full width.
   function tagAvatarLayout(clone) {
     var av = clone.querySelector('[data-testid="Tweet-User-Avatar"]');
     if (!av) return;
@@ -143,6 +147,14 @@
     row.classList.add('fc-row');
     col.classList.add('fc-avcol');
     content.classList.add('fc-content');
+    // Header line = the content child holding the user name; only IT gets the
+    // 52px indent so it sits beside the absolutely-positioned avatar. Everything
+    // after it (text, media, actions) spans the full card width.
+    var name = content.querySelector('[data-testid="User-Name"]');
+    var hdr = name;
+    while (hdr && hdr.parentElement !== content) hdr = hdr.parentElement;
+    if (!hdr) hdr = content.firstElementChild;
+    if (hdr) hdr.classList.add('fc-hdr');
   }
 
   function buildColumns(n) {

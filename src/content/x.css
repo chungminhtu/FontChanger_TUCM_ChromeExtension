@@ -123,27 +123,37 @@ html.fc-home [data-testid="primaryColumn"] {
   overflow: hidden !important;
 }
 
-/* Content full width WITHOUT overlap: float the avatar column left so the header
-   sits beside it and the text/media wrap under it at full width (instead of X's
-   fixed avatar column reserving an empty vertical strip). Classes are tagged on
-   the row / avatar-column / content-column by the masonry script. */
+/* Content full width WITHOUT overlap. A floated avatar column does not work:
+   X's tweet-text wrapper is display:flex (a BFC root), so the whole box is
+   pushed beside the float for its entire height — a tall empty strip. Instead
+   the avatar column is absolutely positioned in the row's top-left corner and
+   ONLY the tagged header line (.fc-hdr, holds the user name) is indented past
+   it; text and media below span the full card width. Classes are tagged by the
+   masonry script. */
 #fc-grid .fc-card .fc-row {
   display: block !important;
+  position: relative !important;
+  min-height: 40px !important;
 }
 #fc-grid .fc-card .fc-avcol {
-  float: left !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
   width: 40px !important;
   min-width: 40px !important;
   max-width: 40px !important;
-  /* Cap the float to the avatar itself: X leaves a tall thread-connector /
-     spacer inside this column, which kept the float full-height and reserved
-     an empty strip beside the whole tweet. */
+  /* Cap to the avatar itself: X leaves a tall thread-connector / spacer in
+     this column; clip it so it can't paint over the full-width content. */
   height: 40px !important;
   overflow: hidden !important;
-  margin-right: 12px !important;
+  margin: 0 !important;
 }
 #fc-grid .fc-card .fc-content {
   display: block !important;
   width: auto !important;
   overflow: visible !important;
+}
+#fc-grid .fc-card .fc-content .fc-hdr {
+  margin-left: 52px !important;
+  min-height: 40px !important;
 }
