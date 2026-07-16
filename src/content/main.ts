@@ -2,7 +2,7 @@
 
 import type { FeatureKey, FeatureToggles, FontSettings } from '../shared/types'
 import { DEFAULT_SETTINGS } from '../shared/constants'
-import { normalizeSettings, isDomainAllowed } from '../shared/utils'
+import { normalizeSettings } from '../shared/utils'
 
 let typographyStyleElement: HTMLStyleElement | null = null;
 let fontsPreloaded = false;
@@ -431,23 +431,14 @@ async function applyEnhancements(): Promise<void> {
   try {
     const currentHost = window.location.hostname.toLowerCase()
     const settings = await getSettings()
-    const isAllowedDomain = isDomainAllowed(currentHost, settings.allowedDomains)
     const isRedditDomain = /(^|\.)reddit\.com$/i.test(currentHost)
 
     console.log('[FontChanger] applyEnhancements:', {
       currentHost,
-      isAllowedDomain,
-      allowedDomains: settings.allowedDomains,
       typographyEnabled: settings.features.typography,
       fontFamily: settings.fontFamily,
       fontSize: settings.fontSize
     })
-
-    if (!isAllowedDomain) {
-      console.log('[FontChanger] Domain not allowed, clearing typography')
-      clearTypography()
-      return
-    }
 
     if (settings.features.typography) {
       console.log('[FontChanger] Applying typography...')
@@ -516,32 +507,11 @@ function startObservers(): void {
   }
 }
 
-// Early check - only run on allowed domains
-;(async () => {
-  try {
-    const currentHost = window.location.hostname.toLowerCase()
-    const settings = await getSettings()
-
-    // If domain is not allowed, clear typography and stop
-    if (!isDomainAllowed(currentHost, settings.allowedDomains)) {
-      clearTypography()
-      return
-    }
-
-    // Domain is allowed - start normal operation
-    onReady(() => {
-      queueEnhancements()
-      startObservers()
-    })
-  } catch (error) {
-    console.error('[FontChanger] Failed to initialize:', error);
-    // Continue anyway - storage might become available later
-    onReady(() => {
-      queueEnhancements()
-      startObservers()
-    })
-  }
-})()
+// Typography applies on every site; start immediately.
+onReady(() => {
+  queueEnhancements()
+  startObservers()
+})
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'FONT_SETTINGS_CHANGED') {
@@ -549,8 +519,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
     ;(async () => {
       try {
-        const currentHost = window.location.hostname.toLowerCase()
-        if (!isDomainAllowed(currentHost, incoming.allowedDomains) || !incoming.features.typography) {
+        if (!incoming.features.typography) {
           clearTypography()
         }
         queueEnhancements()
