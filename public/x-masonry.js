@@ -61,7 +61,9 @@
   var curCols = 0;
   var overlay = null, grid = null, mo = null, loading = false, scheduled = false;
   var lastCount = 0, noProgress = 0;
-  var readerOpen = false, backBtn = null;
+  var readerOpen = false, backBtn = null, backdrop = null;
+  var layoutMode = 'masonry'; // 'masonry' (staggered columns) | 'rows' (aligned grid). Loaded from storage.
+  var layoutBtn = null;
 
   function keyOf(article) {
     var links = article.querySelectorAll('a[href*="/status/"]');
@@ -175,18 +177,48 @@
     }
     return best;
   }
-  function place(el) { shortest().appendChild(el); }
+  // Masonry: append to the shortest column. Rows: append straight to the grid in
+  // source order (CSS grid lays them out in aligned rows).
+  function place(el) {
+    if (layoutMode === 'rows') grid.appendChild(el);
+    else shortest().appendChild(el);
+  }
 
   function positionOverlay() {
     if (overlay) overlay.style.left = navWidth() + 'px'; // sit to the right of the left nav
+  }
+  // Switch the grid container between explicit flex columns (masonry) and a CSS
+  // grid whose rows align at the top (table/rows mode).
+  function applyGridStyle(n) {
+    if (layoutMode === 'rows') {
+      grid.classList.add('fc-rows');
+      grid.style.display = 'grid';
+      grid.style.gridTemplateColumns = 'repeat(' + n + ', minmax(0, 1fr))';
+      grid.style.alignItems = 'start';
+    } else {
+      grid.classList.remove('fc-rows');
+      grid.style.display = 'flex';
+      grid.style.gridTemplateColumns = '';
+      grid.style.alignItems = 'flex-start';
+    }
   }
   function layout() {
     if (!grid) return;
     positionOverlay();
     var n = colCount();
-    if (n !== curCols) {
+    applyGridStyle(n);
+    if (layoutMode === 'rows') {
+      // Cards are direct grid children in source order. Drop any leftover column
+      // wrappers from a previous masonry render, then (re)append every card.
+      if (columnEls.length || grid.querySelector('.fc-col')) {
+        grid.textContent = '';
+        columnEls = [];
+        curCols = 0;
+      }
+      for (var i = 0; i < cards.length; i++) grid.appendChild(cards[i]);
+    } else if (n !== curCols || columnEls.length === 0) {
       buildColumns(n);
-      for (var i = 0; i < cards.length; i++) place(cards[i]); // redistribute
+      for (var j = 0; j < cards.length; j++) place(cards[j]); // redistribute
     }
   }
 
@@ -282,6 +314,39 @@
     requestAnimationFrame(function () { scheduled = false; harvest(); markClipped(); });
   }
 
+  // ---- Layout mode (masonry <-> aligned rows) -------------------------------
+  function updateLayoutBtn() {
+    if (layoutBtn) layoutBtn.textContent = layoutMode === 'rows' ? '▦ Rows' : '▤ Masonry';
+  }
+  function ensureLayoutBtn() {
+    if (layoutBtn) return;
+    layoutBtn = document.createElement('button');
+    layoutBtn.id = 'fc-layout';
+    layoutBtn.type = 'button';
+    layoutBtn.title = 'Toggle grid layout';
+    layoutBtn.addEventListener('click', toggleLayout);
+    document.body.appendChild(layoutBtn);
+    updateLayoutBtn();
+  }
+  function toggleLayout() {
+    layoutMode = layoutMode === 'rows' ? 'masonry' : 'rows';
+    try { chrome.storage.local.set({ xLayout: layoutMode }); } catch (e) { /* no storage */ }
+    updateLayoutBtn();
+    layout();
+    markClipped();
+  }
+  function loadLayoutMode() {
+    try {
+      chrome.storage.local.get({ xLayout: 'masonry' }, function (res) {
+        var mode = (res && res.xLayout === 'rows') ? 'rows' : 'masonry';
+        if (mode === layoutMode) { updateLayoutBtn(); return; }
+        layoutMode = mode;
+        updateLayoutBtn();
+        if (grid) { layout(); markClipped(); }
+      });
+    } catch (e) { /* no storage */ }
+  }
+
   // ---- Thread reader (native, no reload) -----------------------------------
   // Trigger X's own SPA router WITHOUT a page reload. A synthetic anchor click is
   // NOT intercepted by X's React Router (verified on live x.com — it falls through
@@ -301,24 +366,40 @@
     backBtn = document.createElement('button');
     backBtn.id = 'fc-back';
     backBtn.type = 'button';
-    backBtn.textContent = '← Back to grid';
+    backBtn.textContent = '✕ Close';
     backBtn.addEventListener('click', closeReader);
     document.body.appendChild(backBtn);
   }
+  function ensureBackdrop() {
+    if (backdrop) return;
+    backdrop = document.createElement('div');
+    backdrop.id = 'fc-backdrop';
+    backdrop.addEventListener('click', closeReader); // click outside the dialog closes it
+    document.body.appendChild(backdrop);
+  }
+  // Lightbox reader: keep the grid mounted and visible behind a dim backdrop, and
+  // float X's own live thread (primaryColumn) as a centered dialog via CSS
+  // (html.fc-reading). We still SPA-navigate X's router so the thread content is
+  // live/interactive — only the framing is a modal instead of a full-page view.
   function openReader(href) {
     if (!href || readerOpen) return;
     readerOpen = true;
-    if (overlay) overlay.style.display = 'none'; // reveal X's live thread underneath
+    ensureBackdrop();
     ensureBackBtn();
+    backdrop.style.display = 'block';
     backBtn.style.display = 'block';
+    if (layoutBtn) layoutBtn.style.display = 'none';
+    document.documentElement.classList.add('fc-reading');
     spaNavigate(href);
   }
   function closeReader() {
     if (!readerOpen) return;
     readerOpen = false;
+    document.documentElement.classList.remove('fc-reading');
+    if (backdrop) backdrop.style.display = 'none';
     if (backBtn) backBtn.style.display = 'none';
-    if (!isHome()) spaNavigate(location.origin + '/home');
-    if (overlay) overlay.style.display = ''; // grid (with its cards + scroll) comes right back
+    if (layoutBtn) layoutBtn.style.display = 'block';
+    if (!isHome()) spaNavigate(location.origin + '/home'); // grid + scroll survive (overlay was never torn down)
   }
   function onCardClick(e) {
     var card = e.target.closest ? e.target.closest('.fc-card') : null;
@@ -338,12 +419,14 @@
     overlay.style.cssText = 'position:fixed;top:0;left:' + navWidth() + 'px;right:0;bottom:0;overflow-y:auto;' +
       'overflow-x:hidden;z-index:9999;background:' + bg + ';padding:8px;';
     overlay.style.setProperty('--fc-bg', bg); // the clipped-card fade fades to the real bg
+    document.documentElement.style.setProperty('--fc-bg', bg); // lightbox modal uses it too
     grid = document.createElement('div');
     grid.id = 'fc-grid';
-    grid.style.cssText = 'display:flex;gap:' + GAP + 'px;align-items:flex-start;';
+    grid.style.cssText = 'gap:' + GAP + 'px;';
     overlay.appendChild(grid);
     document.body.appendChild(overlay);
-    buildColumns(colCount());
+    ensureLayoutBtn();
+    layout();
 
     grid.addEventListener('click', onCardClick, true); // capture: beat X's link handlers → open reader
 
@@ -439,11 +522,14 @@
   try {
     if (chrome.storage && chrome.storage.onChanged) {
       chrome.storage.onChanged.addListener(function (changes, area) {
-        if (area === 'local') refreshTypography();
+        if (area !== 'local') return;
+        refreshTypography();
+        if (changes.xLayout) loadLayoutMode();
       });
     }
   } catch (e) { /* no storage access */ }
   refreshTypography();
+  loadLayoutMode();
 
   window.addEventListener('resize', layout);
   setInterval(function () {
