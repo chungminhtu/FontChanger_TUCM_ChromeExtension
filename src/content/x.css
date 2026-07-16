@@ -52,43 +52,6 @@ html.fc-home [data-testid="primaryColumn"] {
   background: #1a8cd8;
 }
 
-/* Lightbox reader: dim backdrop over the grid + a centered dialog holding a
-   clone of the clicked card (full text + media, uncapped). Reliable and
-   self-contained — no dependence on X's router/DOM (the old SPA-float left a
-   blank gray modal). The grid overlay stays mounted behind so scroll position
-   and harvested cards survive. */
-#fc-backdrop {
-  display: none;
-  position: fixed;
-  inset: 0;
-  z-index: 100000;
-  background: rgba(0, 0, 0, 0.6);
-}
-#fc-reader {
-  display: none;
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: min(720px, 94vw);
-  max-height: 92vh;
-  overflow-y: auto;
-  z-index: 100001;
-  background: var(--fc-bg, #000);
-  border: 1px solid rgba(128, 128, 128, 0.25);
-  border-radius: 16px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
-  padding: 8px;
-}
-/* The card inside the reader is fully expanded: no height cap, no inline scroll,
-   media at full size. Overrides the grid card caps above. */
-#fc-reader .fc-reader-card {
-  max-height: none !important;
-  overflow: visible !important;
-  cursor: default;
-  width: 100%;
-}
-
 /* Floating grid toggles (shown while the grid is up, hidden while reading).
    Stacked top-right so they never overlap. */
 #fc-layout,
