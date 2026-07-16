@@ -52,38 +52,48 @@ html.fc-home [data-testid="primaryColumn"] {
   background: #1a8cd8;
 }
 
-/* Lightbox reader: dim backdrop over the grid, X's live thread floated as a
-   centered dialog. The masonry script SPA-navigates X to the thread (live &
-   interactive) and adds html.fc-reading; the grid overlay stays mounted behind
-   the backdrop so scroll position + harvested cards survive. */
+/* Lightbox reader: dim backdrop over the grid + a centered dialog holding a
+   clone of the clicked card (full text + media, uncapped). Reliable and
+   self-contained — no dependence on X's router/DOM (the old SPA-float left a
+   blank gray modal). The grid overlay stays mounted behind so scroll position
+   and harvested cards survive. */
 #fc-backdrop {
   display: none;
   position: fixed;
   inset: 0;
   z-index: 100000;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.6);
 }
-html.fc-reading [data-testid="primaryColumn"] {
-  position: fixed !important;
-  top: 50% !important;
-  left: 50% !important;
-  transform: translate(-50%, -50%) !important;
-  width: min(800px, 94vw) !important;
-  max-width: 94vw !important;
-  height: 90vh !important;
-  max-height: 90vh !important;
-  margin: 0 !important;
-  overflow-y: auto !important;
-  z-index: 100001 !important;
-  background: var(--fc-bg, #000) !important;
-  border-radius: 16px !important;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5) !important;
+#fc-reader {
+  display: none;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(720px, 94vw);
+  max-height: 92vh;
+  overflow-y: auto;
+  z-index: 100001;
+  background: var(--fc-bg, #000);
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  border-radius: 16px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  padding: 8px;
+}
+/* The card inside the reader is fully expanded: no height cap, no inline scroll,
+   media at full size. Overrides the grid card caps above. */
+#fc-reader .fc-reader-card {
+  max-height: none !important;
+  overflow: visible !important;
+  cursor: default;
+  width: 100%;
 }
 
-/* Floating layout toggle (masonry <-> aligned rows), shown while the grid is up. */
-#fc-layout {
+/* Floating grid toggles (shown while the grid is up, hidden while reading).
+   Stacked top-right so they never overlap. */
+#fc-layout,
+#fc-fullheight {
   position: fixed;
-  top: 16px;
   right: 16px;
   z-index: 10001;
   padding: 8px 14px;
@@ -95,8 +105,18 @@ html.fc-reading [data-testid="primaryColumn"] {
   cursor: pointer;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
 }
-#fc-layout:hover {
+#fc-layout { top: 16px; }
+#fc-fullheight { top: 56px; }
+#fc-layout:hover,
+#fc-fullheight:hover {
   background: #1a8cd8;
+}
+
+/* Full-height mode: cards grow to fit their content instead of the 600px clip,
+   capped at 100vh so a very long post can't run off forever (it inline-scrolls
+   only past one viewport). No child scroll for anything shorter than 100vh. */
+#fc-masonry.fc-full #fc-grid .fc-card {
+  max-height: 100vh;
 }
 
 /* Rows/table mode: CSS grid (set inline by the script). Cards align at the top

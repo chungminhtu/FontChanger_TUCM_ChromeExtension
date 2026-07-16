@@ -7,13 +7,17 @@
 // LAYOUT: full width — the left nav AND both sidebars are hidden on /home (CSS,
 // gated by html.fc-home). Only mounts on /home.
 //
-// READER: clicking a card opens the full post + comments WITHOUT a page reload.
-// Rather than clone a dead, non-interactive copy, we hide the masonry overlay and
-// SPA-navigate X's own router (a synthetic same-origin anchor click — no reload)
-// to the thread. X renders it live and full-width (sidebars stay hidden), so
-// comments, translation, media and every control still work. A floating "Back"
-// button navigates home and restores the grid. The grid overlay is only hidden
-// (never torn down), so scroll position and harvested cards survive the round trip.
+// READER: clicking a card opens it as a centered LIGHTBOX dialog over a dim
+// backdrop — a fresh clone of the harvested card (full text + media, uncapped
+// height), NOT a page navigation. Self-contained so it can't blank out (the old
+// SPA-float of X's own thread left a gray empty modal). The grid overlay stays
+// mounted behind the backdrop, so scroll position and harvested cards survive.
+// Close via the button, backdrop click, or Escape. (Comments are not shown — the
+// reader is the post itself, not the live thread.)
+//
+// TOGGLES (floating, top-right): layout (masonry <-> aligned rows) and full-height
+// (cards grow to fit, capped at 100vh instead of the 600px clip). Both persist in
+// chrome.storage.local (xLayout / xFullHeight).
 //
 // PERF: masonry uses explicit flex columns (append each card to the shortest
 // column) — NOT CSS column-count. Harvest is debounced; clones are stripped of
@@ -24,7 +28,7 @@
   'use strict';
   var ID = 'fc-masonry';
   var GAP = 10;
-  var MEDIA_GRACE = 3500; // ms to wait for a cell's media/cards to load before harvesting anyway
+  var MEDIA_GRACE = 6000; // ms to wait for a cell's media/cards to load before harvesting anyway
 
   function isHome() {
     var h = location.hostname.replace(/^www\./, '');
@@ -61,9 +65,10 @@
   var curCols = 0;
   var overlay = null, grid = null, mo = null, loading = false, scheduled = false;
   var lastCount = 0, noProgress = 0;
-  var readerOpen = false, backBtn = null, backdrop = null;
+  var readerOpen = false, backBtn = null, backdrop = null, readerEl = null;
   var layoutMode = 'masonry'; // 'masonry' (staggered columns) | 'rows' (aligned grid). Loaded from storage.
   var layoutBtn = null;
+  var fullHeight = false, fullHeightBtn = null; // full-height mode: cards grow to fit (capped 100vh), no inline scroll.
 
   function keyOf(article) {
     var links = article.querySelectorAll('a[href*="/status/"]');
@@ -113,8 +118,20 @@
   function stripEmptyMedia(clone) {
     var wraps = clone.querySelectorAll('[data-testid="tweetPhoto"], [data-testid="card.wrapper"]');
     for (var i = 0; i < wraps.length; i++) {
-      if (!wraps[i].querySelector('img[src^="http"]')) wraps[i].remove();
+      // Keep the wrapper if it has a loadable image: an <img> with an http src, OR
+      // a nested element whose background-image points at an http URL (X renders
+      // some card/photo media as a background-image div, not an <img>).
+      if (wraps[i].querySelector('img[src^="http"]') || hasBgImage(wraps[i])) continue;
+      wraps[i].remove();
     }
+  }
+  function hasBgImage(root) {
+    var els = root.querySelectorAll('*');
+    for (var i = 0; i < els.length; i++) {
+      var bg = els[i].style && els[i].style.backgroundImage;
+      if (bg && bg.indexOf('http') !== -1) return true;
+    }
+    return false;
   }
   // Tag the tweet's flex row + its avatar/content columns so CSS can overlay the
   // avatar in the row's top-left corner and indent ONLY the header line beside it.
@@ -207,19 +224,36 @@
     positionOverlay();
     var n = colCount();
     applyGridStyle(n);
+    // Re-parenting a scrollable card resets its scrollTop, so capture each card's
+    // scroll offset before any redistribute and restore it after. Without this,
+    // the periodic re-layout snapped a card the user was reading back to the top.
+    var scrolls = null;
     if (layoutMode === 'rows') {
       // Cards are direct grid children in source order. Drop any leftover column
       // wrappers from a previous masonry render, then (re)append every card.
       if (columnEls.length || grid.querySelector('.fc-col')) {
+        scrolls = saveScrolls();
         grid.textContent = '';
         columnEls = [];
         curCols = 0;
+        for (var i = 0; i < cards.length; i++) grid.appendChild(cards[i]);
+        restoreScrolls(scrolls);
       }
-      for (var i = 0; i < cards.length; i++) grid.appendChild(cards[i]);
     } else if (n !== curCols || columnEls.length === 0) {
+      scrolls = saveScrolls();
       buildColumns(n);
       for (var j = 0; j < cards.length; j++) place(cards[j]); // redistribute
+      restoreScrolls(scrolls);
     }
+  }
+  function saveScrolls() {
+    var s = [];
+    for (var i = 0; i < cards.length; i++) s[i] = cards[i].scrollTop;
+    return s;
+  }
+  function restoreScrolls(s) {
+    if (!s) return;
+    for (var i = 0; i < cards.length; i++) if (s[i]) cards[i].scrollTop = s[i];
   }
 
   function harvest() {
@@ -291,6 +325,7 @@
   function refill(k, cell) {
     var old = incomplete[k];
     if (!old || !old.parentNode) { delete incomplete[k]; return; }
+    if (old.scrollTop > 4) return; // user is scrolling/reading this card — don't swap it out from under them
     var art = cell.querySelector('article');
     var fresh = cell.cloneNode(true);
     fresh.removeAttribute('data-testid');
@@ -347,20 +382,46 @@
     } catch (e) { /* no storage */ }
   }
 
-  // ---- Thread reader (native, no reload) -----------------------------------
-  // Trigger X's own SPA router WITHOUT a page reload. A synthetic anchor click is
-  // NOT intercepted by X's React Router (verified on live x.com — it falls through
-  // to a full navigation). pushState + a popstate event IS what X's history
-  // listener reacts to, so it renders the route in place. pushState alone does
-  // nothing (verified) — the popstate dispatch is the trigger.
-  function spaNavigate(href) {
-    try {
-      history.pushState({}, '', href);
-      window.dispatchEvent(new PopStateEvent('popstate'));
-    } catch (e) {
-      location.href = href; // last-resort fallback (full nav) if pushState is blocked
-    }
+  // ---- Full-height mode (cards grow to fit, capped at 100vh) ----------------
+  function updateFullHeightBtn() {
+    if (fullHeightBtn) fullHeightBtn.textContent = fullHeight ? '↕ Full height: on' : '↕ Full height: off';
   }
+  function ensureFullHeightBtn() {
+    if (fullHeightBtn) return;
+    fullHeightBtn = document.createElement('button');
+    fullHeightBtn.id = 'fc-fullheight';
+    fullHeightBtn.type = 'button';
+    fullHeightBtn.title = 'Toggle full-height cards';
+    fullHeightBtn.addEventListener('click', toggleFullHeight);
+    document.body.appendChild(fullHeightBtn);
+    updateFullHeightBtn();
+  }
+  function applyFullHeight() {
+    if (overlay) overlay.classList.toggle('fc-full', fullHeight); // CSS caps cards at 100vh, drops the 600px clip
+  }
+  function toggleFullHeight() {
+    fullHeight = !fullHeight;
+    try { chrome.storage.local.set({ xFullHeight: fullHeight }); } catch (e) { /* no storage */ }
+    updateFullHeightBtn();
+    applyFullHeight();
+    markClipped();
+  }
+  function loadFullHeight() {
+    try {
+      chrome.storage.local.get({ xFullHeight: false }, function (res) {
+        fullHeight = !!(res && res.xFullHeight);
+        updateFullHeightBtn();
+        applyFullHeight();
+        if (grid) markClipped();
+      });
+    } catch (e) { /* no storage */ }
+  }
+
+  // ---- Reader (clone lightbox) ---------------------------------------------
+  // Open the clicked card as a centered lightbox dialog over a dim backdrop. We
+  // show a fresh clone of the harvested card (full text + media, uncapped height)
+  // — reliable and self-contained (no dependence on X's router/DOM, which left a
+  // blank gray modal). Close via the button, backdrop click, or Escape.
   function ensureBackBtn() {
     if (backBtn) return;
     backBtn = document.createElement('button');
@@ -377,36 +438,46 @@
     backdrop.addEventListener('click', closeReader); // click outside the dialog closes it
     document.body.appendChild(backdrop);
   }
-  // Lightbox reader: keep the grid mounted and visible behind a dim backdrop, and
-  // float X's own live thread (primaryColumn) as a centered dialog via CSS
-  // (html.fc-reading). We still SPA-navigate X's router so the thread content is
-  // live/interactive — only the framing is a modal instead of a full-page view.
-  function openReader(href) {
-    if (!href || readerOpen) return;
+  function ensureReader() {
+    if (readerEl) return;
+    readerEl = document.createElement('div');
+    readerEl.id = 'fc-reader';
+    document.body.appendChild(readerEl);
+  }
+  function openReader(card) {
+    if (!card || readerOpen) return;
     readerOpen = true;
     ensureBackdrop();
     ensureBackBtn();
+    ensureReader();
+    var clone = card.cloneNode(true);
+    clone.classList.remove('fc-clipped'); // reader is fully expanded, never inline-scrolled
+    clone.classList.add('fc-reader-card');
+    eagerImgs(clone);
+    readerEl.textContent = '';
+    readerEl.appendChild(clone);
+    readerEl.scrollTop = 0;
     backdrop.style.display = 'block';
     backBtn.style.display = 'block';
+    readerEl.style.display = 'block';
     if (layoutBtn) layoutBtn.style.display = 'none';
-    document.documentElement.classList.add('fc-reading');
-    spaNavigate(href);
+    if (fullHeightBtn) fullHeightBtn.style.display = 'none';
   }
   function closeReader() {
     if (!readerOpen) return;
     readerOpen = false;
-    document.documentElement.classList.remove('fc-reading');
     if (backdrop) backdrop.style.display = 'none';
     if (backBtn) backBtn.style.display = 'none';
+    if (readerEl) { readerEl.style.display = 'none'; readerEl.textContent = ''; }
     if (layoutBtn) layoutBtn.style.display = 'block';
-    if (!isHome()) spaNavigate(location.origin + '/home'); // grid + scroll survive (overlay was never torn down)
+    if (fullHeightBtn) fullHeightBtn.style.display = 'block';
   }
   function onCardClick(e) {
     var card = e.target.closest ? e.target.closest('.fc-card') : null;
     if (!card) return;
     e.preventDefault();  // stop the dead clone's own link nav
     e.stopPropagation();
-    openReader(card.getAttribute('data-fc-status'));
+    openReader(card);
   }
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && readerOpen) closeReader(); });
 
@@ -426,6 +497,8 @@
     overlay.appendChild(grid);
     document.body.appendChild(overlay);
     ensureLayoutBtn();
+    ensureFullHeightBtn();
+    applyFullHeight();
     layout();
 
     grid.addEventListener('click', onCardClick, true); // capture: beat X's link handlers → open reader
@@ -454,6 +527,8 @@
     if (mo) { mo.disconnect(); mo = null; }
     if (overlay) { overlay.remove(); overlay = null; grid = null; }
     if (backBtn) { backBtn.style.display = 'none'; }
+    if (backdrop) { backdrop.style.display = 'none'; }
+    if (readerEl) { readerEl.style.display = 'none'; readerEl.textContent = ''; }
     readerOpen = false;
     seen = new Set(); firstSeen = Object.create(null); expandClicked = new WeakSet();
     incomplete = Object.create(null);
@@ -525,11 +600,13 @@
         if (area !== 'local') return;
         refreshTypography();
         if (changes.xLayout) loadLayoutMode();
+        if (changes.xFullHeight) loadFullHeight();
       });
     }
   } catch (e) { /* no storage access */ }
   refreshTypography();
   loadLayoutMode();
+  loadFullHeight();
 
   window.addEventListener('resize', layout);
   setInterval(function () {
