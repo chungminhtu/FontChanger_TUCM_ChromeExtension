@@ -1,3 +1,5 @@
+# ⚠️ ALWAYS BUMP + BUILD + COMMIT + PUSH — NEVER ASK. Every code change, every time. Non-negotiable. See "Ship on finish" below.
+
 # Project rules — fontchanger-tucm
 
 ## Ship on finish (ALWAYS — never ask)
