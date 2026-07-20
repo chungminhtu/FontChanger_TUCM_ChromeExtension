@@ -90,9 +90,20 @@
   // its <img> — otherwise we'd clone an empty bordered box that never fills in.
   function mediaReady(cell) {
     // Avatar first — x.com is fully lazy, and a blank avatar is the most visible
-    // miss. Don't harvest until the profile image has decoded.
-    var avi = cell.querySelector('[data-testid="Tweet-User-Avatar"] img');
+    // miss. X mounts the cell shell (text/buttons) BEFORE the avatar <img> even
+    // exists, so "no img yet" is just as unready as "img not decoded".
+    var avWrap = cell.querySelector('[data-testid="Tweet-User-Avatar"]');
+    if (avWrap && !avWrap.querySelector('img') && !hasBgImage(avWrap)) return false;
+    var avi = avWrap && avWrap.querySelector('img');
     if (avi && (!avi.complete || avi.naturalWidth === 0)) return false;
+    // Unmounted photo: X renders a bare aspect-ratio placeholder inside the
+    // /photo/N anchor before the tweetPhoto wrapper + <img> mount (verified on
+    // live x.com: clone had the anchor + padding-bottom div only, live cell
+    // later grew data-testid="tweetPhoto" with a pbs.twimg.com img).
+    var phAnchors = cell.querySelectorAll('a[href*="/photo/"]');
+    for (var p = 0; p < phAnchors.length; p++) {
+      if (!phAnchors[p].querySelector('img') && !hasBgImage(phAnchors[p])) return false;
+    }
     var imgs = cell.querySelectorAll('img');
     for (var i = 0; i < imgs.length; i++) {
       if (!imgs[i].complete || imgs[i].naturalWidth === 0) return false;
@@ -111,6 +122,10 @@
       imgs[c].loading = 'eager';
       imgs[c].setAttribute('decoding', 'sync');
       imgs[c].removeAttribute('fetchpriority');
+      // X fades imgs in: inline opacity:0, then React sets 1 on load. The clone's
+      // React is dead, so a fully-loaded img stays invisible (verified live:
+      // complete=true, naturalWidth>0, computed opacity 0). Force it visible.
+      imgs[c].style.opacity = '1';
     }
   }
   // X lazy-assigns media <img> src only when the REAL cell intersects the
@@ -140,6 +155,21 @@
       // some card/photo media as a background-image div, not an <img>).
       if (wraps[i].querySelector('img[src^="http"]') || hasBgImage(wraps[i])) continue;
       wraps[i].remove();
+    }
+    // Unmounted photo placeholder: a /photo/N anchor with no <img> at all (X
+    // hadn't mounted tweetPhoto yet when we cloned). Its aspect-ratio div +
+    // bordered ancestor render as a big empty box — remove the whole empty
+    // media region (climb while the parent holds nothing else real).
+    var phs = clone.querySelectorAll('a[href*="/photo/"]');
+    for (var p = 0; p < phs.length; p++) {
+      var a = phs[p];
+      if (a.querySelector('img[src^="http"]') || hasBgImage(a)) continue;
+      var top = a;
+      while (top.parentElement && top.parentElement !== clone &&
+             !top.parentElement.querySelector('[data-testid="tweetText"], [data-testid="User-Name"], time, img[src^="http"], video')) {
+        top = top.parentElement;
+      }
+      top.remove();
     }
   }
   function hasBgImage(root) {
@@ -366,6 +396,31 @@
     requestAnimationFrame(function () { scheduled = false; harvest(); markClipped(); });
   }
 
+  // Drive X's background timeline. X only mounts a cell's media/avatar when the
+  // cell sits in X's OWN viewport, so a blind one-viewport step can rush past a
+  // cell before it hydrates — the clone then stays blank forever. Instead, park
+  // the background viewport on the first cell that still needs media (unharvested
+  // or harvested-incomplete) and let it load; only when nothing on screen is
+  // pending do we step onward. Cells that refused to hydrate within twice the
+  // grace window are skipped so one dead cell can't stall the loader.
+  function advanceTimeline() {
+    var now = Date.now();
+    var cells = document.querySelectorAll('[data-testid="cellInnerDiv"]');
+    for (var i = 0; i < cells.length; i++) {
+      var cell = cells[i];
+      var art = cell.querySelector('article');
+      if (!art || !art.querySelector('time')) continue;
+      var k = keyOf(art);
+      if (!k) continue;
+      if (seen.has(k) && !incomplete[k]) continue;
+      if (firstSeen[k] !== undefined && now - firstSeen[k] > MEDIA_GRACE * 2) continue;
+      if (mediaReady(cell)) continue;
+      cell.scrollIntoView({ block: 'center' });
+      return;
+    }
+    window.scrollBy(0, window.innerHeight * 1.0);
+  }
+
   // ---- Layout mode (masonry <-> aligned rows) -------------------------------
   function updateLayoutBtn() {
     if (layoutBtn) layoutBtn.textContent = layoutMode === 'rows' ? '▦ Rows' : '▤ Masonry';
@@ -516,10 +571,10 @@
       if (loading || readerOpen) return;
       if (overlay.scrollTop + overlay.clientHeight > overlay.scrollHeight - 1500) {
         loading = true;
-        // Gentle step + dwell: x.com only loads a cell's media/avatar once it sits
-        // in the viewport, so scrolling too far too fast leaves blanks. Smaller
-        // step + longer dwell = each cell stays on screen long enough to load.
-        window.scrollBy(0, window.innerHeight * 1.0);
+        // Targeted step + dwell: park X's viewport on the first cell still
+        // missing media so it hydrates before we move on (blind steps left
+        // permanent blanks — see advanceTimeline).
+        advanceTimeline();
         setTimeout(function () { schedule(); loading = false; }, 1300);
       }
     }, { passive: true });
@@ -627,12 +682,20 @@
     mount();
     layout();
     schedule();
-    // Bootstrap: fill until the grid is scrollable, but STOP after a few rounds
-    // with no new cards so it can't spin forever (the "loop running" bug).
-    if (cards.length === lastCount) noProgress++; else { noProgress = 0; lastCount = cards.length; }
-    if (!loading && noProgress < 4 && overlay && overlay.scrollHeight <= overlay.clientHeight + 400) {
+    // Loader: fill until the grid is scrollable AND keep feeding while the user
+    // sits near the grid's bottom (a scroll event can't fire once scrollTop is
+    // pinned at max, so the scroll handler alone starves there — verified live).
+    // STOP after a few rounds with no progress so it can't spin forever (the
+    // "loop running" bug); any user scroll resets the counter. Progress = new
+    // cards OR an incomplete card getting refilled, so the loader keeps dwelling
+    // while media is still hydrating.
+    var stamp = cards.length + ':' + Object.keys(incomplete).length;
+    if (stamp === lastCount) noProgress++; else { noProgress = 0; lastCount = stamp; }
+    var needMore = overlay && (overlay.scrollHeight <= overlay.clientHeight + 400 ||
+      overlay.scrollTop + overlay.clientHeight > overlay.scrollHeight - 1500);
+    if (!loading && noProgress < 8 && needMore) { // 8 ticks ≈ 9.6s: outlasts one MEDIA_GRACE hydration dwell
       loading = true;
-      window.scrollBy(0, window.innerHeight * 1.0);
+      advanceTimeline();
       setTimeout(function () { schedule(); loading = false; }, 1300);
     }
   }, 1200);
