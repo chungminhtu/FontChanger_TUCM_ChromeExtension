@@ -119,9 +119,19 @@ html.fc-home [data-testid="primaryColumn"] {
 #fc-grid .fc-card [data-testid="tweetText"] {
   cursor: text;
 }
-#fc-grid .fc-card [data-testid="reply"] {
+/* Action buttons (reply/like/repost/bookmark/share/⋯) forward to the live cell
+   — they are real click targets, so show a pointer. */
+#fc-grid .fc-card [data-testid="reply"],
+#fc-grid .fc-card [role="group"] button,
+#fc-grid .fc-card [data-testid="caret"],
+#fc-grid .fc-card [data-testid="videoPlayer"],
+#fc-grid .fc-card [data-testid="videoComponent"] {
   cursor: pointer;
 }
+/* X's menus/dialogs (share, ⋯, repost) portal into #layers, which sits in a
+   z-index:0 ancestor stacking context. The overlay is therefore mounted INSIDE
+   #layers (see x-masonry.js mount()) as an earlier sibling, so those menus —
+   later siblings — paint above the grid. No z-index override needed here. */
 /* Long posts (taller than the cap) scroll inline instead of showing "Show more".
    The 8px scrollbar gutter is always reserved (no layout shift) but the thumb is
    transparent until you hover the card — "hover to get a scrollbar". */

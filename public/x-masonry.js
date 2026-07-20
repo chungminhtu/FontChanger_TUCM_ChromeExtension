@@ -305,6 +305,20 @@
     for (var i = 0; i < cards.length; i++) if (s[i]) cards[i].scrollTop = s[i];
   }
 
+  // Build a display clone of a live cell (shared by harvest/refill/refreshCard).
+  function makeCard(cell, k, statusHref) {
+    var clone = cell.cloneNode(true);
+    clone.removeAttribute('data-testid');
+    clone.removeAttribute('style');
+    clone.className = 'fc-card';
+    clone.setAttribute('data-fc-status', statusHref || '');
+    clone.setAttribute('data-fc-id', k);
+    eagerImgs(clone);
+    stripEmptyMedia(clone);
+    tagAvatarLayout(clone);
+    return clone;
+  }
+
   function harvest() {
     if (!grid) return;
     var now = Date.now();
@@ -343,16 +357,7 @@
       if (!ready && now - firstSeen[k] < MEDIA_GRACE) continue; // let media/text settle
       seen.add(k);
 
-      var statusHref = statusHrefOf(art);
-      var clone = cell.cloneNode(true);
-      clone.removeAttribute('data-testid');
-      clone.removeAttribute('style');
-      clone.className = 'fc-card';
-      clone.setAttribute('data-fc-status', statusHref);
-      clone.setAttribute('data-fc-id', k);
-      eagerImgs(clone);
-      stripEmptyMedia(clone);
-      tagAvatarLayout(clone);
+      var clone = makeCard(cell, k, statusHrefOf(art));
       if (!ready) incomplete[k] = clone; // grace expired with media still missing → re-fill later
       cards.push(clone);
       place(clone);
@@ -376,15 +381,7 @@
     if (!old || !old.parentNode) { delete incomplete[k]; return; }
     if (old.scrollTop > 4) return; // user is scrolling/reading this card — don't swap it out from under them
     var art = cell.querySelector('article');
-    var fresh = cell.cloneNode(true);
-    fresh.removeAttribute('data-testid');
-    fresh.removeAttribute('style');
-    fresh.className = 'fc-card';
-    fresh.setAttribute('data-fc-status', art ? statusHrefOf(art) : (old.getAttribute('data-fc-status') || ''));
-    fresh.setAttribute('data-fc-id', k);
-    eagerImgs(fresh);
-    stripEmptyMedia(fresh);
-    tagAvatarLayout(fresh);
+    var fresh = makeCard(cell, k, art ? statusHrefOf(art) : (old.getAttribute('data-fc-status') || ''));
     old.parentNode.replaceChild(fresh, old);
     var idx = cards.indexOf(old);
     if (idx >= 0) cards[idx] = fresh;
@@ -537,11 +534,54 @@
     if (!isHome()) spaNavigate(location.origin + '/home');
     if (overlay) overlay.style.display = ''; // grid (with its cards + scroll) comes right back
   }
-  // Only the reply (chat) icon opens the thread reader. Everywhere else the
-  // card behaves like inert content: text selects/copies, images right-click
-  // save, dead action buttons do nothing. Anchors inside a clone still carry
-  // real hrefs and would full-navigate the page (killing the grid), so they
-  // open in a new tab instead.
+  // ---- Forwarding clone clicks to the LIVE cell ------------------------------
+  // Clones are dead React, so their buttons do nothing by themselves. But the
+  // live cell (when X still has it in the background timeline) reacts to a full
+  // synthetic pointer sequence (verified on live x.com: like toggled →
+  // data-testid flipped like/unlike; share button opened X's real menu). Menus
+  // and dialogs render into X's #layers portal, which CSS raises above the
+  // overlay so they are visible and clickable.
+  // A menu/dialog X portaled into #layers is anchored to document coords of the
+  // live button — any background scroll drags it off-screen. Loader pauses
+  // while one is open.
+  function xMenuOpen() {
+    return !!document.querySelector('#layers [role="menu"], #layers [role="dialog"]');
+  }
+  function liveArticleFor(card) {
+    var k = card.getAttribute('data-fc-id');
+    if (!k || !/^\d+$/.test(k)) return null;
+    var arts = document.querySelectorAll('[data-testid="cellInnerDiv"] article');
+    for (var i = 0; i < arts.length; i++) {
+      if (arts[i].querySelector('a[href*="/status/' + k + '"]')) return arts[i];
+    }
+    return null;
+  }
+  function forwardClick(el) {
+    var evs = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
+    for (var i = 0; i < evs.length; i++) {
+      el.dispatchEvent(new MouseEvent(evs[i], { bubbles: true, cancelable: true, view: window }));
+    }
+  }
+  // Re-clone the live cell so a forwarded action's new state (heart color,
+  // count) shows up in the card.
+  function refreshCard(card) {
+    var art = liveArticleFor(card);
+    if (!art || !card.parentNode) return;
+    var cell = art.closest('[data-testid="cellInnerDiv"]');
+    if (!cell) return;
+    var k = card.getAttribute('data-fc-id');
+    var fresh = makeCard(cell, k, statusHrefOf(art) || card.getAttribute('data-fc-status'));
+    card.parentNode.replaceChild(fresh, card);
+    var idx = cards.indexOf(card);
+    if (idx >= 0) cards[idx] = fresh;
+    markClipped();
+  }
+  // Reply (chat) icon → thread reader. Video → thread reader (a clone's <video>
+  // is dead; the thread plays it natively). Other action buttons (like, repost,
+  // bookmark, share, ⋯ caret) → forwarded to the live cell; if X already
+  // dropped that cell, fall back to the reader where everything works. Anchors
+  // open in a new tab (a clone's real href would full-navigate and kill the
+  // grid). Everything else stays inert so text selects and images copy.
   function onCardClick(e) {
     var card = e.target.closest ? e.target.closest('.fc-card') : null;
     if (!card) return;
@@ -549,6 +589,42 @@
       e.preventDefault();
       e.stopPropagation();
       openReader(card.getAttribute('data-fc-status'));
+      return;
+    }
+    if (e.target.closest('[data-testid="videoPlayer"], [data-testid="videoComponent"]')) {
+      e.preventDefault();
+      e.stopPropagation();
+      openReader(card.getAttribute('data-fc-status'));
+      return;
+    }
+    var btn = e.target.closest('button, [role="button"]');
+    if (btn && card.contains(btn) && !btn.closest('a[href]')) {
+      e.preventDefault();
+      e.stopPropagation();
+      var art = liveArticleFor(card);
+      if (!art) { openReader(card.getAttribute('data-fc-status')); return; }
+      var target = null;
+      var t = btn.getAttribute('data-testid');
+      if (t) target = art.querySelector('[data-testid="' + t + '"]');
+      if (!target) {
+        // Share has no data-testid — map by index within the actions row.
+        var cg = btn.closest('[role="group"]');
+        var lg = art.querySelector('[role="group"]');
+        if (cg && lg) {
+          var cb = cg.querySelectorAll('button');
+          var lb = lg.querySelectorAll('button');
+          for (var i = 0; i < cb.length; i++) {
+            if (cb[i] === btn && lb[i]) { target = lb[i]; break; }
+          }
+        }
+      }
+      if (!target) { openReader(card.getAttribute('data-fc-status')); return; }
+      // X positions menus at the live button's on-screen coords; if the
+      // background timeline has scrolled past, the menu opens off-screen
+      // (measured top:-1513). Center the live cell first.
+      target.scrollIntoView({ block: 'center' });
+      forwardClick(target);
+      setTimeout(function () { refreshCard(card); }, 1500); // let X commit the state change first
       return;
     }
     var a = e.target.closest('a[href]');
@@ -568,13 +644,20 @@
     var bg = getComputedStyle(document.body).backgroundColor || '#fff';
     overlay.style.cssText = 'position:fixed;top:0;left:' + navWidth() + 'px;right:0;bottom:0;overflow-y:auto;' +
       'overflow-x:hidden;z-index:9999;background:' + bg + ';padding:8px;';
+    // Mount INSIDE X's #layers portal: #layers lives in a z-index:0 ancestor
+    // stacking context, so a body-level z9999 overlay always painted ABOVE the
+    // menus/dialogs X portals there (share menu was unreachable). As an EARLIER
+    // sibling in the same context (z:0 vs their later DOM order) the grid still
+    // covers the timeline but X's menus paint on top. Fallback: body (tests).
+    var layersHost = document.getElementById('layers');
+    if (layersHost) overlay.style.zIndex = '0';
     overlay.style.setProperty('--fc-bg', bg); // the clipped-card fade fades to the real bg
     document.documentElement.style.setProperty('--fc-bg', bg); // lightbox modal uses it too
     grid = document.createElement('div');
     grid.id = 'fc-grid';
     grid.style.cssText = 'gap:' + GAP + 'px;';
     overlay.appendChild(grid);
-    document.body.appendChild(overlay);
+    (layersHost || document.body).appendChild(overlay);
     ensureLayoutBtn();
     ensureFullHeightBtn();
     applyFullHeight();
@@ -584,7 +667,7 @@
 
     overlay.addEventListener('scroll', function () {
       noProgress = 0; // user engaged → allow loading again
-      if (loading || readerOpen) return;
+      if (loading || readerOpen || xMenuOpen()) return;
       if (overlay.scrollTop + overlay.clientHeight > overlay.scrollHeight - 1500) {
         loading = true;
         // Targeted step + dwell: park X's viewport on the first cell still
@@ -709,7 +792,7 @@
     if (stamp === lastCount) noProgress++; else { noProgress = 0; lastCount = stamp; }
     var needMore = overlay && (overlay.scrollHeight <= overlay.clientHeight + 400 ||
       overlay.scrollTop + overlay.clientHeight > overlay.scrollHeight - 1500);
-    if (!loading && noProgress < 8 && needMore) { // 8 ticks ≈ 9.6s: outlasts one MEDIA_GRACE hydration dwell
+    if (!loading && noProgress < 8 && needMore && !xMenuOpen()) { // 8 ticks ≈ 9.6s: outlasts one MEDIA_GRACE hydration dwell
       loading = true;
       advanceTimeline();
       setTimeout(function () { schedule(); loading = false; }, 1300);
