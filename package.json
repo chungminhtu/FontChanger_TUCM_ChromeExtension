@@ -1,7 +1,7 @@
 {
   "name": "fontchanger-tucm",
   "type": "module",
-  "version": "1.2.25",
+  "version": "1.2.26",
   "private": true,
   "scripts": {
     "dev": "vite",

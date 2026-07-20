@@ -111,6 +111,15 @@ html.fc-home [data-testid="primaryColumn"] {
   /* Cap very tall posts so one long article can't dominate a column; the rest is
      read by scrolling inside the card (see .fc-clipped below). */
   max-height: 600px;
+  /* The card is NOT a button: text selects/copies, images right-click save.
+     Only the reply (chat) icon opens the thread reader. */
+  cursor: auto;
+  user-select: text;
+}
+#fc-grid .fc-card [data-testid="tweetText"] {
+  cursor: text;
+}
+#fc-grid .fc-card [data-testid="reply"] {
   cursor: pointer;
 }
 /* Long posts (taller than the cap) scroll inline instead of showing "Show more".

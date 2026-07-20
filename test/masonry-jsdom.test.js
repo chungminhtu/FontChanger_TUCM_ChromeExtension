@@ -27,6 +27,7 @@ function cellHTML(id, text) {
         <a href="/user${id}/status/${id}">link</a>
         <div data-testid="tweetText">${text}</div>
         <div data-testid="tweetPhoto"><img src="https://pbs.twimg.com/x${id}.jpg"></div>
+        <button data-testid="reply"><span>reply</span></button>
       </article>
     </div>`;
 }
@@ -109,14 +110,23 @@ ok('card carries data-fc-status permalink', firstCard && /\/status\/1001$/.test(
 ok('card carries data-fc-id', firstCard && firstCard.getAttribute('data-fc-id') === '1001');
 ok('cloned card has no live data-testid on root', firstCard && !firstCard.getAttribute('data-testid'));
 
-console.log('\n[3] Click a card → reader opens (overlay hidden + Back shown)');
+console.log('\n[3] Only the reply icon opens the reader; body clicks stay inert');
 // Spy on the SPA-nav anchor: record clicks dispatched on anchors with a status href.
 let navigatedTo = null;
 document.addEventListener('click', (e) => {
   const a = e.target && e.target.closest && e.target.closest('a[href]');
   if (a && /\/status\//.test(a.getAttribute('href'))) navigatedTo = a.getAttribute('href');
 }, true);
-firstCard.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+// Clicking the card body (tweet text) must NOT open the reader (text stays copyable).
+firstCard.querySelector('[data-testid="tweetText"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+ok('body click leaves overlay visible', overlay.style.display !== 'none');
+// Clicking an anchor must NOT navigate the page — it opens a new tab instead.
+let openedTab = null;
+window.open = (href) => { openedTab = href; };
+firstCard.querySelector('a[href]').dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+ok('anchor click opens new tab, overlay stays', /\/status\/1001$/.test(openedTab || '') && overlay.style.display !== 'none');
+// Clicking the reply (chat) icon opens the reader.
+firstCard.querySelector('[data-testid="reply"] span').dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
 ok('overlay hidden on open', overlay.style.display === 'none');
 const back = document.getElementById('fc-back');
 ok('#fc-back button created', !!back);

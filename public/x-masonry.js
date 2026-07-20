@@ -7,8 +7,10 @@
 // LAYOUT: full width — the left nav AND both sidebars are hidden on /home (CSS,
 // gated by html.fc-home). Only mounts on /home.
 //
-// READER: clicking a card opens X's OWN live thread (full article + comments +
-// every working button, exactly like the detail page) WITHOUT a page reload. We
+// READER: clicking a card's reply (chat) icon opens X's OWN live thread (full
+// article + comments + every working button, exactly like the detail page)
+// WITHOUT a page reload. The rest of the card stays inert so text/media can be
+// selected and copied; links open in a new tab. We
 // hide the masonry overlay to reveal X's live thread and SPA-navigate X's router
 // (pushState + popstate). A floating "Back to grid" button navigates home and
 // restores the grid. The overlay is only hidden (never torn down), so scroll
@@ -490,7 +492,7 @@
   }
 
   // ---- Reader (live thread, no reload) -------------------------------------
-  // Clicking a card opens X's OWN live thread — full article, comments, and every
+  // Clicking a card's reply icon opens X's OWN live thread — full article, comments, and every
   // button work exactly like the detail page — WITHOUT a page reload. We hide the
   // masonry overlay to reveal X's live thread underneath and SPA-navigate X's
   // router (pushState + popstate is what its history listener reacts to; a
@@ -535,12 +537,26 @@
     if (!isHome()) spaNavigate(location.origin + '/home');
     if (overlay) overlay.style.display = ''; // grid (with its cards + scroll) comes right back
   }
+  // Only the reply (chat) icon opens the thread reader. Everywhere else the
+  // card behaves like inert content: text selects/copies, images right-click
+  // save, dead action buttons do nothing. Anchors inside a clone still carry
+  // real hrefs and would full-navigate the page (killing the grid), so they
+  // open in a new tab instead.
   function onCardClick(e) {
     var card = e.target.closest ? e.target.closest('.fc-card') : null;
     if (!card) return;
-    e.preventDefault();  // stop the dead clone's own link nav
-    e.stopPropagation();
-    openReader(card.getAttribute('data-fc-status'));
+    if (e.target.closest('[data-testid="reply"]')) {
+      e.preventDefault();
+      e.stopPropagation();
+      openReader(card.getAttribute('data-fc-status'));
+      return;
+    }
+    var a = e.target.closest('a[href]');
+    if (a) {
+      e.preventDefault();
+      e.stopPropagation();
+      window.open(a.href, '_blank');
+    }
   }
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && readerOpen) closeReader(); });
 
@@ -564,7 +580,7 @@
     applyFullHeight();
     layout();
 
-    grid.addEventListener('click', onCardClick, true); // capture: beat X's link handlers → open reader
+    grid.addEventListener('click', onCardClick, true); // capture: beat the clones' own link navs
 
     overlay.addEventListener('scroll', function () {
       noProgress = 0; // user engaged → allow loading again
