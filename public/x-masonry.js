@@ -627,19 +627,18 @@
     }
     return best && best.url;
   }
-  function playVideoInCard(card, playerEl) {
+  var tweetJsonCache = Object.create(null); // id -> syndication tweet JSON (hover would refetch otherwise)
+  function playVideoInCard(card, playerEl, hover) {
     var k = card.getAttribute('data-fc-id');
-    var fallback = function () { openReader(card.getAttribute('data-fc-status')); };
+    // Hover is speculative — fail silently. A click falls back to the reader.
+    var fallback = hover ? function () {} : function () { openReader(card.getAttribute('data-fc-status')); };
     var canSend = false;
     try { canSend = !!(chrome.runtime && chrome.runtime.sendMessage); } catch (err) { canSend = false; }
     if (!canSend || !/^\d+$/.test(k)) { fallback(); return; }
     var players = card.querySelectorAll('[data-testid="videoPlayer"], [data-testid="videoComponent"]');
     var idx = 0;
     for (var i = 0; i < players.length; i++) if (players[i] === playerEl) { idx = i; break; }
-    try {
-      chrome.runtime.sendMessage({ type: 'FC_TWEET_JSON', id: k }, function (res) {
-        if ((chrome.runtime && chrome.runtime.lastError) || !res || !res.success) { fallback(); return; }
-        var j = res.tweet || {};
+    var onTweet = function (j) {
         var media = [];
         var pools = [j.mediaDetails || []];
         if (j.quoted_tweet && j.quoted_tweet.mediaDetails) pools.push(j.quoted_tweet.mediaDetails);
@@ -652,6 +651,7 @@
         var m = media[idx] || media[0];
         var url = m && bestVideoVariant(m);
         if (!url) { fallback(); return; }
+        if (!playerEl.isConnected || playerEl.querySelector('video.fc-video')) return; // card refreshed / raced
         var vid = document.createElement('video');
         vid.className = 'fc-video';
         vid.controls = true;
@@ -659,6 +659,9 @@
         vid.playsInline = true;
         vid.preload = 'auto';
         if (m.type === 'animated_gif') { vid.loop = true; vid.muted = true; vid.controls = false; }
+        // Hover preview starts muted (no user activation — unmuted play would be
+        // rejected); marked so mouseleave pauses it and a click keeps it.
+        if (hover) { vid.muted = true; vid.setAttribute('data-fc-hover', '1'); }
         if ((m.media_url_https || '').indexOf('http') === 0) vid.poster = m.media_url_https;
         vid.src = url;
         vid.addEventListener('error', function () {
@@ -677,8 +680,49 @@
           var q = vid.play();
           if (q && q.catch) q.catch(function () { /* poster + controls remain */ });
         });
+    };
+    if (tweetJsonCache[k]) { onTweet(tweetJsonCache[k]); return; }
+    try {
+      chrome.runtime.sendMessage({ type: 'FC_TWEET_JSON', id: k }, function (res) {
+        if ((chrome.runtime && chrome.runtime.lastError) || !res || !res.success) { fallback(); return; }
+        tweetJsonCache[k] = res.tweet || {};
+        onTweet(tweetJsonCache[k]);
       });
     } catch (err) { fallback(); }
+  }
+  // Hover-to-play: dwell 250ms on a card's video → muted inline preview; leave →
+  // pause. A click on the running preview hands it to the native controls (and
+  // un-marks it so leaving no longer pauses).
+  var hoverTimer = null, hoverPlayer = null;
+  function onGridOver(e) {
+    var player = e.target.closest ? e.target.closest('[data-testid="videoPlayer"], [data-testid="videoComponent"]') : null;
+    if (!player) return;
+    var card = player.closest('.fc-card');
+    if (!card) return;
+    var vid = player.querySelector('video.fc-video');
+    if (vid) {
+      if (vid.getAttribute('data-fc-hover') && vid.paused) {
+        var p = vid.play();
+        if (p && p.catch) p.catch(function () { /* stays paused */ });
+      }
+      return;
+    }
+    if (hoverPlayer === player) return; // dwell timer already armed
+    clearTimeout(hoverTimer);
+    hoverPlayer = player;
+    hoverTimer = setTimeout(function () {
+      hoverPlayer = null;
+      if (!player.isConnected || player.querySelector('video.fc-video')) return;
+      playVideoInCard(card, player, true);
+    }, 250);
+  }
+  function onGridOut(e) {
+    var player = e.target.closest ? e.target.closest('[data-testid="videoPlayer"], [data-testid="videoComponent"]') : null;
+    if (!player) return;
+    if (e.relatedTarget && player.contains(e.relatedTarget)) return; // moved within the player
+    if (hoverPlayer === player) { clearTimeout(hoverTimer); hoverPlayer = null; }
+    var vid = player.querySelector('video.fc-video');
+    if (vid && vid.getAttribute('data-fc-hover') && !vid.paused) vid.pause();
   }
 
   // Bring an evicted cell back: scroll X's background timeline to the cell's
@@ -721,7 +765,8 @@
     if (player) {
       e.preventDefault();
       e.stopPropagation();
-      if (player.querySelector('video.fc-video')) return; // already playing — let native controls take clicks
+      var pv = player.querySelector('video.fc-video');
+      if (pv) { pv.removeAttribute('data-fc-hover'); return; } // user engaged — keep playing on leave, controls take over
       playVideoInCard(card, player);
       return;
     }
@@ -814,6 +859,8 @@
     layout();
 
     grid.addEventListener('click', onCardClick, true); // capture: beat the clones' own link navs
+    grid.addEventListener('mouseover', onGridOver);    // hover-to-play video previews
+    grid.addEventListener('mouseout', onGridOut);
 
     overlay.addEventListener('scroll', function () {
       noProgress = 0; // user engaged → allow loading again
