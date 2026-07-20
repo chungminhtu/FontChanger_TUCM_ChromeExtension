@@ -383,6 +383,7 @@
   function refill(k, cell) {
     var old = incomplete[k];
     if (!old || !old.parentNode) { delete incomplete[k]; return; }
+    if (old.getAttribute('data-fc-playing')) { delete incomplete[k]; return; } // in-card video running — never clobber
     if (old.scrollTop > 4) return; // user is scrolling/reading this card — don't swap it out from under them
     var art = cell.querySelector('article');
     var fresh = makeCard(cell, k, art ? statusHrefOf(art) : (old.getAttribute('data-fc-status') || ''));
@@ -551,6 +552,30 @@
   function xMenuOpen() {
     return !!document.querySelector('#layers [role="menu"], #layers [role="dialog"]');
   }
+  // X drops its dropdown as `#layers … [role=menu]` with inline top/right
+  // anchored to the LIVE button — nowhere near the card the user clicked. Wait
+  // for the menu to mount (≤ ~1s), then pin it at the mouse point, clamped
+  // fully on-screen. Repositioning is safe: item clicks keep working
+  // (verified live — copy-link fired its toast after the move).
+  function moveMenuNear(x, y, preExisting) {
+    var tries = 0;
+    var iv = setInterval(function () {
+      tries++;
+      var m = document.querySelector('#layers [role="menu"]');
+      if (m && m !== preExisting) {
+        clearInterval(iv);
+        m.style.position = 'fixed';
+        m.style.right = 'auto';
+        m.style.bottom = 'auto';
+        m.style.transform = 'none';
+        var r = m.getBoundingClientRect();
+        m.style.left = Math.max(8, Math.min(x, window.innerWidth - r.width - 8)) + 'px';
+        m.style.top = Math.max(8, Math.min(y, window.innerHeight - r.height - 8)) + 'px';
+      } else if (tries > 12) {
+        clearInterval(iv); // action had no menu (like/bookmark) — nothing to move
+      }
+    }, 80);
+  }
   function liveArticleFor(card) {
     var k = card.getAttribute('data-fc-id');
     if (!k || !/^\d+$/.test(k)) return null;
@@ -571,6 +596,7 @@
   // a freshly restored cell mounts without media, and swapping the card for
   // that shell would eat its images.
   function refreshCard(card, attempt) {
+    if (card.getAttribute('data-fc-playing')) return; // in-card video running — never clobber
     var art = liveArticleFor(card);
     if (!art || !card.parentNode) return;
     var cell = art.closest('[data-testid="cellInnerDiv"]');
@@ -586,6 +612,75 @@
     if (idx >= 0) cards[idx] = fresh;
     markClipped();
   }
+  // ---- In-card video playback -----------------------------------------------
+  // A clone's <video> can never stream (blob/MediaSource dies on detach), but
+  // X's public syndication API returns direct video.twimg.com mp4 URLs — same
+  // host X's own player streams from, so the page's media-src CSP allows it.
+  // The fetch itself is CSP/CORS-blocked on x.com, so the background service
+  // worker does it (FC_TWEET_JSON). Failure falls back to the thread reader.
+  function bestVideoVariant(media) {
+    var vs = (media.video_info && media.video_info.variants) || [];
+    var best = null;
+    for (var i = 0; i < vs.length; i++) {
+      if (vs[i].content_type !== 'video/mp4') continue;
+      if (!best || (vs[i].bitrate || 0) > (best.bitrate || 0)) best = vs[i];
+    }
+    return best && best.url;
+  }
+  function playVideoInCard(card, playerEl) {
+    var k = card.getAttribute('data-fc-id');
+    var fallback = function () { openReader(card.getAttribute('data-fc-status')); };
+    var canSend = false;
+    try { canSend = !!(chrome.runtime && chrome.runtime.sendMessage); } catch (err) { canSend = false; }
+    if (!canSend || !/^\d+$/.test(k)) { fallback(); return; }
+    var players = card.querySelectorAll('[data-testid="videoPlayer"], [data-testid="videoComponent"]');
+    var idx = 0;
+    for (var i = 0; i < players.length; i++) if (players[i] === playerEl) { idx = i; break; }
+    try {
+      chrome.runtime.sendMessage({ type: 'FC_TWEET_JSON', id: k }, function (res) {
+        if ((chrome.runtime && chrome.runtime.lastError) || !res || !res.success) { fallback(); return; }
+        var j = res.tweet || {};
+        var media = [];
+        var pools = [j.mediaDetails || []];
+        if (j.quoted_tweet && j.quoted_tweet.mediaDetails) pools.push(j.quoted_tweet.mediaDetails);
+        for (var p = 0; p < pools.length; p++) {
+          for (var m2 = 0; m2 < pools[p].length; m2++) {
+            var t = pools[p][m2].type;
+            if (t === 'video' || t === 'animated_gif') media.push(pools[p][m2]);
+          }
+        }
+        var m = media[idx] || media[0];
+        var url = m && bestVideoVariant(m);
+        if (!url) { fallback(); return; }
+        var vid = document.createElement('video');
+        vid.className = 'fc-video';
+        vid.controls = true;
+        vid.autoplay = true;
+        vid.playsInline = true;
+        vid.preload = 'auto';
+        if (m.type === 'animated_gif') { vid.loop = true; vid.muted = true; vid.controls = false; }
+        if ((m.media_url_https || '').indexOf('http') === 0) vid.poster = m.media_url_https;
+        vid.src = url;
+        vid.addEventListener('error', function () {
+          card.removeAttribute('data-fc-playing');
+          fallback(); // variant dead or media-src blocked — thread as last resort
+        }, { once: true });
+        card.setAttribute('data-fc-playing', '1'); // refill/refresh must not clobber the player
+        playerEl.textContent = '';
+        playerEl.appendChild(vid);
+        // A real click carries user activation → sound autoplay allowed. If the
+        // activation is gone (or the click was synthetic), retry muted — muted
+        // autoplay is always allowed; the user unmutes via the controls.
+        var p = vid.play();
+        if (p && p.catch) p.catch(function () {
+          vid.muted = true;
+          var q = vid.play();
+          if (q && q.catch) q.catch(function () { /* poster + controls remain */ });
+        });
+      });
+    } catch (err) { fallback(); }
+  }
+
   // Bring an evicted cell back: scroll X's background timeline to the cell's
   // recorded document offset and poll — the virtualizer re-renders it once its
   // slot is inside X's viewport (verified live). Offsets can drift a little as
@@ -622,10 +717,12 @@
       openReader(card.getAttribute('data-fc-status'));
       return;
     }
-    if (e.target.closest('[data-testid="videoPlayer"], [data-testid="videoComponent"]')) {
+    var player = e.target.closest('[data-testid="videoPlayer"], [data-testid="videoComponent"]');
+    if (player) {
       e.preventDefault();
       e.stopPropagation();
-      openReader(card.getAttribute('data-fc-status'));
+      if (player.querySelector('video.fc-video')) return; // already playing — let native controls take clicks
+      playVideoInCard(card, player);
       return;
     }
     var btn = e.target.closest('button, [role="button"]');
@@ -633,6 +730,11 @@
       e.preventDefault();
       e.stopPropagation();
       if (restoring) return; // a restore drive is mid-flight — swallow, don't queue
+      // Menu anchor = the mouse point (fall back to the clicked button's corner
+      // for synthetic clicks that carry no coords).
+      var br = btn.getBoundingClientRect();
+      var mx = e.clientX || Math.round(br.left);
+      var my = e.clientY || Math.round(br.bottom);
       var act = function (art) {
         var target = null;
         var t = btn.getAttribute('data-testid');
@@ -652,9 +754,12 @@
         if (!target) return;
         // X positions menus at the live button's on-screen coords; if the
         // background timeline has scrolled past, the menu opens off-screen
-        // (measured top:-1513). Center the live cell first.
+        // (measured top:-1513). Center the live cell first, then re-pin any
+        // menu that opens to the user's mouse point.
         target.scrollIntoView({ block: 'center' });
+        var preMenu = document.querySelector('#layers [role="menu"]');
         forwardClick(target);
+        moveMenuNear(mx, my, preMenu);
         setTimeout(function () { refreshCard(card); }, 1500); // let X commit the state change first
       };
       var art = liveArticleFor(card);

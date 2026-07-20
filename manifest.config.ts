@@ -43,6 +43,9 @@ export default defineManifest({
   host_permissions: [
     'https://fonts.googleapis.com/*',
     'https://fonts.gstatic.com/*',
+    // In-card video playback on X: background fetches the public syndication
+    // JSON (page CSP/CORS block it from the content script).
+    'https://cdn.syndication.twimg.com/*',
   ],
   side_panel: {
     default_path: 'src/sidepanel/index.html',

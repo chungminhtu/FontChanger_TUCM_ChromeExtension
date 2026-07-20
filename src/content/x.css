@@ -132,6 +132,16 @@ html.fc-home [data-testid="primaryColumn"] {
    z-index:0 ancestor stacking context. The overlay is therefore mounted INSIDE
    #layers (see x-masonry.js mount()) as an earlier sibling, so those menus —
    later siblings — paint above the grid. No z-index override needed here. */
+
+/* In-card video player (syndication mp4 swapped in on click). */
+#fc-grid .fc-card video.fc-video {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 80vh;
+  background: #000;
+  border-radius: 12px;
+}
 /* Long posts (taller than the cap) scroll inline instead of showing "Show more".
    The 8px scrollbar gutter is always reserved (no layout shift) but the thumb is
    transparent until you hover the card — "hover to get a scrollbar". */

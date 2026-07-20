@@ -74,6 +74,35 @@ async function convertFontUrlsToDataUris(css: string): Promise<string> {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type === 'FC_TWEET_JSON') {
+    // x-masonry.js in-card video playback: page CSP/CORS block the syndication
+    // API from content-script and page worlds, so the fetch happens here (host
+    // permission granted in the manifest). Returns X's public tweet JSON with
+    // mediaDetails[].video_info.variants (direct video.twimg.com mp4 URLs).
+    const id: string = String(message.id || '');
+    if (!/^\d+$/.test(id)) {
+      sendResponse({ success: false, error: 'bad id' });
+      return false;
+    }
+    const token = ((Number(id) / 1e15) * Math.PI).toString(36).replace(/(0+|\.)/g, '');
+    (async () => {
+      try {
+        const response = await fetch(
+          `https://cdn.syndication.twimg.com/tweet-result?id=${id}&token=${token}&lang=en`
+        );
+        if (!response.ok) throw new Error(`syndication fetch failed: ${response.status}`);
+        const tweet = await response.json();
+        sendResponse({ success: true, tweet });
+      } catch (error) {
+        sendResponse({
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    })();
+    return true; // keep channel open for async response
+  }
+
   if (message.type === 'FETCH_FONT_CSS') {
     const fontUrl = message.fontUrl;
 
