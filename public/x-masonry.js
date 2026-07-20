@@ -306,6 +306,9 @@
   }
 
   // Build a display clone of a live cell (shared by harvest/refill/refreshCard).
+  // data-fc-y records the cell's document offset: X's virtualizer re-renders a
+  // dropped cell when that offset scrolls back into ITS viewport, which is how
+  // forwarded actions find their live cell again after X evicted it.
   function makeCard(cell, k, statusHref) {
     var clone = cell.cloneNode(true);
     clone.removeAttribute('data-testid');
@@ -313,6 +316,7 @@
     clone.className = 'fc-card';
     clone.setAttribute('data-fc-status', statusHref || '');
     clone.setAttribute('data-fc-id', k);
+    clone.setAttribute('data-fc-y', String(Math.round(cell.getBoundingClientRect().top + window.scrollY)));
     eagerImgs(clone);
     stripEmptyMedia(clone);
     tagAvatarLayout(clone);
@@ -563,18 +567,45 @@
     }
   }
   // Re-clone the live cell so a forwarded action's new state (heart color,
-  // count) shows up in the card.
-  function refreshCard(card) {
+  // count) shows up in the card. Retries while the cell is still hydrating —
+  // a freshly restored cell mounts without media, and swapping the card for
+  // that shell would eat its images.
+  function refreshCard(card, attempt) {
     var art = liveArticleFor(card);
     if (!art || !card.parentNode) return;
     var cell = art.closest('[data-testid="cellInnerDiv"]');
     if (!cell) return;
+    if (!mediaReady(cell)) {
+      if ((attempt || 0) < 5) setTimeout(function () { refreshCard(card, (attempt || 0) + 1); }, 700);
+      return;
+    }
     var k = card.getAttribute('data-fc-id');
     var fresh = makeCard(cell, k, statusHrefOf(art) || card.getAttribute('data-fc-status'));
     card.parentNode.replaceChild(fresh, card);
     var idx = cards.indexOf(card);
     if (idx >= 0) cards[idx] = fresh;
     markClipped();
+  }
+  // Bring an evicted cell back: scroll X's background timeline to the cell's
+  // recorded document offset and poll — the virtualizer re-renders it once its
+  // slot is inside X's viewport (verified live). Offsets can drift a little as
+  // X re-measures, so probe one viewport above/below before giving up.
+  var restoring = false;
+  function restoreLiveCell(card, cb) {
+    var y = parseInt(card.getAttribute('data-fc-y') || '', 10);
+    if (isNaN(y)) { cb(null); return; }
+    restoring = true;
+    loading = true; // freeze the loader — it must not fight this scroll
+    window.scrollTo(0, Math.max(0, y - Math.round(window.innerHeight / 2)));
+    var tries = 0;
+    var iv = setInterval(function () {
+      tries++;
+      var art = liveArticleFor(card);
+      if (art) { clearInterval(iv); restoring = false; loading = false; cb(art); return; }
+      if (tries === 8) window.scrollTo(0, Math.max(0, y - window.innerHeight * 1.5));
+      if (tries === 12) window.scrollTo(0, y);
+      if (tries >= 16) { clearInterval(iv); restoring = false; loading = false; cb(null); }
+    }, 200);
   }
   // Reply (chat) icon → thread reader. Video → thread reader (a clone's <video>
   // is dead; the thread plays it natively). Other action buttons (like, repost,
@@ -601,30 +632,40 @@
     if (btn && card.contains(btn) && !btn.closest('a[href]')) {
       e.preventDefault();
       e.stopPropagation();
-      var art = liveArticleFor(card);
-      if (!art) { openReader(card.getAttribute('data-fc-status')); return; }
-      var target = null;
-      var t = btn.getAttribute('data-testid');
-      if (t) target = art.querySelector('[data-testid="' + t + '"]');
-      if (!target) {
-        // Share has no data-testid — map by index within the actions row.
-        var cg = btn.closest('[role="group"]');
-        var lg = art.querySelector('[role="group"]');
-        if (cg && lg) {
-          var cb = cg.querySelectorAll('button');
-          var lb = lg.querySelectorAll('button');
-          for (var i = 0; i < cb.length; i++) {
-            if (cb[i] === btn && lb[i]) { target = lb[i]; break; }
+      if (restoring) return; // a restore drive is mid-flight — swallow, don't queue
+      var act = function (art) {
+        var target = null;
+        var t = btn.getAttribute('data-testid');
+        if (t) target = art.querySelector('[data-testid="' + t + '"]');
+        if (!target) {
+          // Share has no data-testid — map by index within the actions row.
+          var cg = btn.closest('[role="group"]');
+          var lg = art.querySelector('[role="group"]');
+          if (cg && lg) {
+            var cb = cg.querySelectorAll('button');
+            var lb = lg.querySelectorAll('button');
+            for (var i = 0; i < cb.length; i++) {
+              if (cb[i] === btn && lb[i]) { target = lb[i]; break; }
+            }
           }
         }
-      }
-      if (!target) { openReader(card.getAttribute('data-fc-status')); return; }
-      // X positions menus at the live button's on-screen coords; if the
-      // background timeline has scrolled past, the menu opens off-screen
-      // (measured top:-1513). Center the live cell first.
-      target.scrollIntoView({ block: 'center' });
-      forwardClick(target);
-      setTimeout(function () { refreshCard(card); }, 1500); // let X commit the state change first
+        if (!target) return;
+        // X positions menus at the live button's on-screen coords; if the
+        // background timeline has scrolled past, the menu opens off-screen
+        // (measured top:-1513). Center the live cell first.
+        target.scrollIntoView({ block: 'center' });
+        forwardClick(target);
+        setTimeout(function () { refreshCard(card); }, 1500); // let X commit the state change first
+      };
+      var art = liveArticleFor(card);
+      if (art) { act(art); return; }
+      // X evicted the cell (virtualized timeline) — restore it, then act. This
+      // used to fall back to the reader, which read as "every click opens the
+      // detail page". Only a failed restore opens the reader now.
+      restoreLiveCell(card, function (art2) {
+        if (art2) act(art2);
+        else openReader(card.getAttribute('data-fc-status'));
+      });
       return;
     }
     var a = e.target.closest('a[href]');
@@ -651,6 +692,10 @@
     // covers the timeline but X's menus paint on top. Fallback: body (tests).
     var layersHost = document.getElementById('layers');
     if (layersHost) overlay.style.zIndex = '0';
+    // Build marker: lets a live inspection confirm WHICH version is running
+    // (a stale extension load looks exactly like a logic bug otherwise).
+    try { overlay.setAttribute('data-fc-version', chrome.runtime.getManifest().version); }
+    catch (err) { overlay.setAttribute('data-fc-version', 'dev'); }
     overlay.style.setProperty('--fc-bg', bg); // the clipped-card fade fades to the real bg
     document.documentElement.style.setProperty('--fc-bg', bg); // lightbox modal uses it too
     grid = document.createElement('div');
