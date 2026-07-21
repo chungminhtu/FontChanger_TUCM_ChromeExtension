@@ -2,7 +2,7 @@
 
 import type { FeatureKey, FeatureToggles, FontSettings } from '../shared/types'
 import { DEFAULT_SETTINGS } from '../shared/constants'
-import { normalizeSettings } from '../shared/utils'
+import { normalizeSettings, isDomainAllowed } from '../shared/utils'
 
 let typographyStyleElement: HTMLStyleElement | null = null;
 let fontsPreloaded = false;
@@ -212,12 +212,31 @@ function applyTypography(settings: FontSettings): void {
 
   clearTypography();
 
+  // Exclude icon-font elements so we don't clobber ligature/glyph fonts
+  // (Material Icons, Font Awesome, Bootstrap Icons, etc). Pseudo-elements
+  // are left untouched entirely because Font Awesome renders glyphs via
+  // ::before content in its own font.
+  const iconExclusions = [
+    '[class*="icon"]',
+    '[class*="Icon"]',
+    '[class*="material-icons"]',
+    '[class*="material-symbols"]',
+    '.fa', '.fas', '.far', '.fal', '.fab', '.fad', '.fak',
+    '.fa-solid', '.fa-regular', '.fa-brands', '.fa-light', '.fa-thin', '.fa-duotone',
+    '[class^="fa-"]', '[class*=" fa-"]',
+    '.glyphicon',
+    '.bi', '[class^="bi-"]', '[class*=" bi-"]',
+    '.octicon',
+    'ion-icon',
+    '[data-icon]',
+  ].map((sel) => `:not(${sel})`).join('');
+
   // Only apply font-family, no other typography modifications
   const css = `
-    body,
-    body *,
-    body *::before,
-    body *::after {
+    body {
+      font-family: '${settings.fontFamily}', sans-serif !important;
+    }
+    body *${iconExclusions} {
       font-family: '${settings.fontFamily}', sans-serif !important;
     }
   `;
@@ -432,15 +451,18 @@ async function applyEnhancements(): Promise<void> {
     const currentHost = window.location.hostname.toLowerCase()
     const settings = await getSettings()
     const isRedditDomain = /(^|\.)reddit\.com$/i.test(currentHost)
+    const domainAllowed = isDomainAllowed(currentHost, settings.allowedDomains)
+    const typographyEnabled = settings.features.typography && domainAllowed
 
     console.log('[FontChanger] applyEnhancements:', {
       currentHost,
-      typographyEnabled: settings.features.typography,
+      domainAllowed,
+      typographyEnabled,
       fontFamily: settings.fontFamily,
       fontSize: settings.fontSize
     })
 
-    if (settings.features.typography) {
+    if (typographyEnabled) {
       console.log('[FontChanger] Applying typography...')
       try {
         await loadAllFonts();
@@ -452,7 +474,7 @@ async function applyEnhancements(): Promise<void> {
         clearTypography();
       }
     } else {
-      console.log('[FontChanger] Typography feature disabled')
+      console.log('[FontChanger] Typography skipped (feature off or site not allowed)')
       clearTypography();
     }
 
@@ -507,7 +529,7 @@ function startObservers(): void {
   }
 }
 
-// Typography applies on every site; start immediately.
+// Typography applies only on allowed sites; enhancement pipeline decides. Start immediately.
 onReady(() => {
   queueEnhancements()
   startObservers()
